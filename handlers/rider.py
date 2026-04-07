@@ -25,18 +25,18 @@ from utils.fare import calculate_fare
 
 def vehicle_inline_keyboard_rider() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Car (3-4 Seats)",  callback_data="rveh_car")],
-        [InlineKeyboardButton("Tuk (2-3 Seats)",  callback_data="rveh_tuk")],
-        [InlineKeyboardButton("Bike (1 Seat)",    callback_data="rveh_bike")],
-        [InlineKeyboardButton("Van (5+ Seats)",   callback_data="rveh_van")],
+        [InlineKeyboardButton("🚗 Car (3-4 Seats)",  callback_data="rveh_car")],
+        [InlineKeyboardButton("🛺 Tuk (2-3 Seats)",  callback_data="rveh_tuk")],
+        [InlineKeyboardButton("🏍️ Bike (1 Seat)",    callback_data="rveh_bike")],
+        [InlineKeyboardButton("🚐 Van (5+ Seats)",   callback_data="rveh_van")],
     ])
 
 
 RVEH_LABELS = {
-    "rveh_car":  ("Car",  "car"),
-    "rveh_tuk":  ("Tuk",  "tuk"),
-    "rveh_bike": ("Bike", "bike"),
-    "rveh_van":  ("Van",  "van"),
+    "rveh_car":  ("🚗 Car",  "car"),
+    "rveh_tuk":  ("🛺 Tuk",  "tuk"),
+    "rveh_bike": ("🏍️ Bike", "bike"),
+    "rveh_van":  ("🚐 Van",  "van"),
 }
 
 
@@ -47,19 +47,19 @@ async def rider_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db_user = await db.get_user(user.id)
     if db_user and db_user["is_blocked"]:
-        await update.message.reply_text("You are blocked from using this service.")
+        await update.message.reply_text("🚫 You are blocked from using this service.")
         return ConversationHandler.END
 
     active = await db.get_active_ride_for_rider(user.id)
     if active:
         await update.message.reply_text(
-            f"You already have an active Ride #{active['ride_id']}.\n"
+            "⚠️ You already have an active Ride #" + str(active["ride_id"]) + ".\n"
             "Use /cancelride to cancel it first."
         )
         return ConversationHandler.END
 
     await update.message.reply_text(
-        "What type of vehicle do you need?",
+        "🚗 What type of vehicle do you need?",
         reply_markup=vehicle_inline_keyboard_rider(),
     )
     return RIDER_VEHICLE
@@ -76,19 +76,19 @@ async def rider_vehicle_selected(update: Update, context: ContextTypes.DEFAULT_T
     blocked = await db.get_blocked_categories()
     if veh_type in blocked:
         await query.edit_message_text(
-            f"Sorry, {label} is currently unavailable. Please choose another vehicle."
+            "⚠️ Sorry, " + label + " is currently unavailable. Please choose another vehicle."
         )
         await query.message.reply_text(
-            "What type of vehicle do you need?",
+            "🚗 What type of vehicle do you need?",
             reply_markup=vehicle_inline_keyboard_rider(),
         )
         return RIDER_VEHICLE
 
-    await query.edit_message_text(f"{label} selected!")
+    await query.edit_message_text(label + " selected! ✅")
     await query.message.reply_text(
-        "Share your pickup location:",
+        "📍 Share your pickup location:",
         reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("Send My Location", request_location=True)]],
+            [[KeyboardButton("📍 Send My Location", request_location=True)]],
             resize_keyboard=True,
         ),
     )
@@ -108,10 +108,10 @@ async def rider_pickup_received(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["pickup_name"] = pickup_name
 
     await update.message.reply_text(
-        "Where do you want to go?\n\n"
+        "🏁 Where do you want to go?\n\n"
         "Type the place name or address in English.\n"
         "Example: Colombo Fort, Kandy, Galle\n\n"
-        "Or tap the attachment button (paperclip) -> Location to pin on map.",
+        "Or tap 📎 attachment button → Location to pin on map.",
         reply_markup=ReplyKeyboardRemove(),
     )
     return RIDER_DEST_INPUT
@@ -130,11 +130,11 @@ async def rider_dest_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not results:
         await update.message.reply_text(
-            "No results found for \"" + query_text + "\".\n\n"
+            "❌ No results found for: " + query_text + "\n\n"
             "Tips:\n"
-            "- Type the name in English\n"
-            "- Try a shorter name (e.g. Colombo instead of Colombo Fort Station)\n"
-            "- Share your location directly using the attachment button"
+            "• Type the name in English\n"
+            "• Try a shorter name (e.g. Colombo instead of Colombo Fort Station)\n"
+            "• Share your location directly using 📎 attachment button"
         )
         return RIDER_DEST_INPUT
 
@@ -145,12 +145,10 @@ async def rider_dest_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append([InlineKeyboardButton(
             str(i + 1) + ". " + r["name"], callback_data="dest_" + str(i)
         )])
-    buttons.append([InlineKeyboardButton(
-        "Search Again", callback_data="dest_retry"
-    )])
+    buttons.append([InlineKeyboardButton("🔍 Search Again", callback_data="dest_retry")])
 
     await update.message.reply_text(
-        "Found " + str(len(results)) + " results for \"" + query_text + "\".\n"
+        "📍 Found " + str(len(results)) + " results for \"" + query_text + "\":\n"
         "Choose your destination:",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
@@ -172,7 +170,7 @@ async def rider_dest_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if query.data == "dest_retry":
         await query.edit_message_text(
-            "Type the destination name again:\n"
+            "🔍 Type the destination name:\n"
             "(Example: Colombo, Kandy, Galle)"
         )
         return RIDER_DEST_INPUT
@@ -180,12 +178,12 @@ async def rider_dest_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         idx = int(query.data.split("_")[1])
     except (IndexError, ValueError):
-        await query.edit_message_text("Invalid selection. Please type the name again.")
+        await query.edit_message_text("⚠️ Invalid selection. Please type the name again.")
         return RIDER_DEST_INPUT
 
     results = context.user_data.get("dest_results", [])
     if idx >= len(results):
-        await query.edit_message_text("Result not found. Please type the name again.")
+        await query.edit_message_text("⚠️ Result not found. Please type the name again.")
         return RIDER_DEST_INPUT
 
     selected = results[idx]
@@ -201,17 +199,17 @@ async def rider_dest_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         pass
 
-    await query.edit_message_text("Drop-off set: " + selected["name"])
+    await query.edit_message_text("✅ Drop-off set: " + selected["name"])
     return await _show_fare_estimate(update, context, is_callback=True)
 
 
 async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
                                is_callback: bool = False):
     ud = context.user_data
-    pickup_lat  = ud["pickup_lat"]
-    pickup_lon  = ud["pickup_lon"]
-    dropoff_lat = ud["dropoff_lat"]
-    dropoff_lon = ud["dropoff_lon"]
+    pickup_lat   = ud["pickup_lat"]
+    pickup_lon   = ud["pickup_lon"]
+    dropoff_lat  = ud["dropoff_lat"]
+    dropoff_lon  = ud["dropoff_lon"]
     pickup_name  = ud.get("pickup_name", "Pickup")
     dropoff_name = ud.get("dropoff_name", "Drop-off")
     vehicle_label = ud.get("rider_vehicle_label", "Car")
@@ -227,27 +225,24 @@ async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
         await db.set_cached_route(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, dist, fare)
 
     ud["est_distance"] = dist
-    ud["est_fare"] = fare
-    ud["base_fare"] = base_fare
-    ud["per_km"] = per_km
-    ud["base_km"] = base_km
+    ud["est_fare"]     = fare
 
     text = (
-        "PickRide - Fare Estimate\n\n"
-        "Pickup: " + pickup_name + "\n"
-        "Drop-off: " + dropoff_name + "\n"
-        "Vehicle: " + vehicle_label + "\n"
-        "Distance: " + str(dist) + " km\n"
-        "Rate: First " + str(base_km) + " km = LKR " + str(base_fare) +
+        "🚕 PickRide — Fare Estimate\n\n"
+        "📍 Pickup:   " + pickup_name + "\n"
+        "🏁 Drop-off: " + dropoff_name + "\n"
+        "🚗 Vehicle:  " + vehicle_label + "\n\n"
+        "✏ Distance: " + str(dist) + " km\n"
+        "💵 Rate: First " + str(base_km) + " km = LKR " + str(base_fare) +
         ", then LKR " + str(per_km) + "/km\n"
-        "Total Fare: LKR " + str(fare) + "\n\n"
+        "💰 Total Fare: LKR " + str(fare) + "\n\n"
         "Confirm your ride to notify nearby drivers."
     )
 
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("Confirm Ride", callback_data="ride_confirm"),
-            InlineKeyboardButton("Cancel",       callback_data="ride_cancel"),
+            InlineKeyboardButton("✅ Confirm Ride", callback_data="ride_confirm"),
+            InlineKeyboardButton("❌ Cancel",       callback_data="ride_cancel"),
         ]
     ])
 
@@ -265,14 +260,29 @@ async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "ride_cancel":
-        await query.edit_message_text("Ride request cancelled.")
+        await query.edit_message_text("❌ Ride request cancelled.")
+        await query.message.reply_text(
+            "Back to main menu:",
+            reply_markup=await main_keyboard(update.effective_user.id),
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # Guard: ensure ride data is still in context
+    ud = context.user_data
+    required = ["rider_vehicle", "pickup_lat", "pickup_lon",
+                "dropoff_lat", "dropoff_lon", "est_distance", "est_fare"]
+    if not all(k in ud for k in required):
+        await query.edit_message_text(
+            "⚠️ Session expired. Please start a new ride request.\n\n"
+            "Tap 🚕 Request Ride from the main menu."
+        )
         await query.message.reply_text(
             "Back to main menu:",
             reply_markup=await main_keyboard(update.effective_user.id),
         )
         return ConversationHandler.END
 
-    ud = context.user_data
     user = update.effective_user
 
     ride_id = await db.create_ride(
@@ -289,12 +299,12 @@ async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await query.edit_message_text(
-        "Ride #" + str(ride_id) + " created!\n\n"
-        "Estimated distance: " + str(ud["est_distance"]) + " km\n"
-        "Estimated fare: ~LKR " + str(ud["est_fare"]) + "\n\n"
-        "Pickup: " + ud.get("pickup_name", "Pickup") + "\n"
-        "Drop-off: " + ud.get("dropoff_name", "Drop-off") + "\n\n"
-        "Finding nearby drivers..."
+        "✅ Ride #" + str(ride_id) + " created!\n\n"
+        "📍 Pickup:   " + ud.get("pickup_name", "Pickup") + "\n"
+        "🏁 Drop-off: " + ud.get("dropoff_name", "Drop-off") + "\n"
+        "✏ Distance: " + str(ud["est_distance"]) + " km\n"
+        "💰 Fare:     ~LKR " + str(ud["est_fare"]) + "\n\n"
+        "🔍 Finding nearby drivers..."
     )
 
     radius = float(await db.get_setting("driver_radius") or 8)
@@ -304,7 +314,7 @@ async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bot = context.bot
     accept_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Accept Ride", callback_data="accept_" + str(ride_id))]
+        [InlineKeyboardButton("🟨 Accept Ride", callback_data="accept_" + str(ride_id))]
     ])
 
     notified = 0
@@ -314,10 +324,10 @@ async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await bot.send_message(
                 drv["user_id"],
-                "New Trip Request!\n\n"
+                "🔔 New Trip Request!\n\n"
                 "Rider is " + str(round(drv["dist_km"], 2)) + " km away\n"
-                "Estimated trip: " + str(ud["est_distance"]) + " km\n"
-                "Estimated fare: ~LKR " + str(ud["est_fare"]) + "\n"
+                "✏ Trip distance: " + str(ud["est_distance"]) + " km\n"
+                "💰 Est. fare: ~LKR " + str(ud["est_fare"]) + "\n"
                 "Ride #" + str(ride_id),
                 reply_markup=accept_keyboard,
             )
@@ -327,13 +337,15 @@ async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if notified == 0:
         await query.message.reply_text(
-            "No drivers available nearby. Please try again later.",
+            "⚠️ No drivers available nearby at the moment.\n"
+            "Please try again later.",
             reply_markup=await main_keyboard(user.id),
         )
         await db.cancel_ride(ride_id)
     else:
         await query.message.reply_text(
-            "Request sent to " + str(notified) + " driver(s). Waiting for acceptance...",
+            "📡 Request sent to " + str(notified) + " driver(s).\n"
+            "Waiting for acceptance...",
             reply_markup=await main_keyboard(user.id),
         )
 
@@ -369,4 +381,5 @@ def rider_conv_handler() -> ConversationHandler:
         },
         fallbacks=[CommandHandler("cancel", cmd_cancel)],
         allow_reentry=True,
+        per_message=False,
     )

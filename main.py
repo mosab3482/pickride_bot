@@ -35,6 +35,7 @@ from handlers.trip import (
     live_location_update,
     rating_callback,
 )
+from handlers.rider import rider_confirm
 from handlers.admin import (
     admin_entry, admin_callback, admin_text_input,
 )
@@ -143,6 +144,11 @@ def main():
 
     # ── Admin callbacks ──────────────────────────
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^adm_"))
+
+    # ── Fallback for ride confirm/cancel (handles post-restart sessions) ──────
+    # ConversationHandler handles this first when state is active.
+    # This global handler catches it if bot restarted and state was lost.
+    app.add_handler(CallbackQueryHandler(rider_confirm, pattern=r"^ride_(confirm|cancel)$"))
 
     # ── Main menu text buttons ───────────────────
     app.add_handler(MessageHandler(filters.Regex("^ℹ️ Help$"),                handle_help))
