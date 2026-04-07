@@ -70,56 +70,96 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     dist_km = ride["distance_km"]
     fare    = ride["fare"]
 
-    # ── Navigation buttons using InlineKeyboard URL type (always clickable) ──
-    nav_kb = InlineKeyboardMarkup([
+    # ── Driver notification: full trip details + navigation + WhatsApp ──────────
+    rider_wa_btn = []
+    if rider_phone and rider_phone != "N/A":
+        clean_rider_phone = rider_phone.replace("+", "").replace(" ", "")
+        rider_wa_btn = [
+            InlineKeyboardButton(
+                "📞 Call/WhatsApp Rider",
+                url=f"https://wa.me/{clean_rider_phone}",
+            )
+        ]
+
+    # Build pickup pinpoint link for Google Maps (opens map at exact pin)
+    pickup_pin_link  = (
+        f"https://www.google.com/maps/search/?api=1"
+        f"&query={ride['pickup_lat']},{ride['pickup_lon']}"
+    )
+    dropoff_pin_link = (
+        f"https://www.google.com/maps/search/?api=1"
+        f"&query={ride['dropoff_lat']},{ride['dropoff_lon']}"
+    )
+
+    nav_kb_rows = [
         [
             InlineKeyboardButton(
                 "🗺 Navigate to PICKUP",
-                url=f"https://www.google.com/maps/dir/?api=1"
+                url=(
+                    f"https://www.google.com/maps/dir/?api=1"
                     f"&origin={drv_lat},{drv_lon}"
                     f"&destination={ride['pickup_lat']},{ride['pickup_lon']}"
-                    f"&travelmode=driving",
+                    f"&travelmode=driving"
+                ),
             )
         ],
         [
             InlineKeyboardButton(
                 "🏁 Navigate to DROP-OFF",
-                url=f"https://www.google.com/maps/dir/?api=1"
+                url=(
+                    f"https://www.google.com/maps/dir/?api=1"
                     f"&origin={ride['pickup_lat']},{ride['pickup_lon']}"
                     f"&destination={ride['dropoff_lat']},{ride['dropoff_lon']}"
-                    f"&travelmode=driving",
+                    f"&travelmode=driving"
+                ),
             )
         ],
-        [InlineKeyboardButton("🟢 Start Trip", callback_data=f"starttrip_{ride_id}")],
+        [
+            InlineKeyboardButton("📌 View Pickup Pin",  url=pickup_pin_link),
+            InlineKeyboardButton("📌 View Drop-off Pin", url=dropoff_pin_link),
+        ],
+    ]
+    if rider_wa_btn:
+        nav_kb_rows.append(rider_wa_btn)
+    nav_kb_rows += [
+        [InlineKeyboardButton("🟢 Start Trip",              callback_data=f"starttrip_{ride_id}")],
         [InlineKeyboardButton("📍 Share Location to Start", callback_data=f"shareloc_{ride_id}")],
-    ])
+    ]
+    nav_kb = InlineKeyboardMarkup(nav_kb_rows)
 
     await query.message.reply_text(
         f"🎉 You've accepted Ride #{ride_id}!\n\n"
         f"👤 Rider: {rider_username}\n"
-        f"📞 Phone: {rider_phone}\n"
+        f"📞 Contact: {rider_phone}\n"
         f"✏ Distance: {dist_km} km\n"
         f"💰 Fare: LKR {fare}\n\n"
         f"📍 Pickup:   {pickup_name}\n"
         f"🏁 Drop-off: {dropoff_name}\n\n"
-        f"Use the navigation buttons below, then tap Start Trip when you reach the rider:",
+        f"Use the buttons below to navigate. Call rider if needed. "
+        f"Tap Start Trip when ready:",
         reply_markup=nav_kb,
     )
 
-    # ── Notify rider ──────────────────────────────────────────────────────────
+    # ── Notify rider: driver is coming + driver WhatsApp button ──────────────
     driver_phone  = driver_user["phone"] if driver_user else "N/A"
-    driver_wa_btn = []
+    rider_alert_btns = []
     if driver_phone and driver_phone != "N/A":
-        clean_phone = driver_phone.replace("+", "").replace(" ", "")
-        driver_wa_btn = [[InlineKeyboardButton("💬 WhatsApp Driver", url=f"https://wa.me/{clean_phone}")]]
+        clean_drv_phone = driver_phone.replace("+", "").replace(" ", "")
+        rider_alert_btns.append(
+            [InlineKeyboardButton("📞 Call/WhatsApp Driver", url=f"https://wa.me/{clean_drv_phone}")]
+        )
 
     await context.bot.send_message(
         ride["rider_id"],
         f"✅ Ride #{ride_id} accepted!\n\n"
-        f"Driver: {driver_name}\n"
-        f"Contact: {driver_phone}\n\n"
+        f"🚗 Driver: {driver_name}\n"
+        f"📞 Contact: {driver_phone}\n\n"
+        f"📍 Pickup:   {pickup_name}\n"
+        f"🏁 Drop-off: {dropoff_name}\n"
+        f"✏ Distance: {dist_km} km\n"
+        f"💰 Est. Fare: LKR {fare}\n\n"
         f"Driver is on the way. Please wait at the pickup location.",
-        reply_markup=InlineKeyboardMarkup(driver_wa_btn) if driver_wa_btn else None,
+        reply_markup=InlineKeyboardMarkup(rider_alert_btns) if rider_alert_btns else None,
     )
 
 

@@ -24,6 +24,10 @@ DEFAULT_BASE_KM       = float(os.getenv("DEFAULT_BASE_KM",        2))
 DEFAULT_WAITING_RATE  = float(os.getenv("DEFAULT_WAITING_RATE",    5))
 DEFAULT_DRIVER_RADIUS = float(os.getenv("DEFAULT_DRIVER_RADIUS",   8))
 
+# Google Maps API key (used for real road-distance estimates)
+# Enable the "Distance Matrix API" and "Directions API" in Google Cloud Console
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
+
 VEHICLE_TYPES = {
     "🚗 Car": "car",
     "🛺 Tuk": "tuk",

@@ -22,37 +22,40 @@ from handlers.start import main_keyboard, cmd_cancel
 ) = range(10, 17)
 
 
-def driver_dashboard_keyboard(is_muted: bool) -> ReplyKeyboardMarkup:
-    mute_btn = "🔔 Unmute (recommended)" if is_muted else "🔕 Mute"
-    buttons = [
-        [KeyboardButton("📍 Check-in", request_location=True)],
-        [KeyboardButton(mute_btn)],
-        [KeyboardButton("🔧 Settings")],
-    ]
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+# ── Updated vehicle types ─────────────────────────────────────────────────────
+VEHICLE_LABELS = {
+    "veh_tuk":     "🛺 Tuk (2 Seats)",
+    "veh_car":     "🚗 Car (3 Seats)",
+    "veh_minivan": "🚙 Mini Van (5 Seats)",
+    "veh_van":     "🚐 Van (10 Seats)",
+    "veh_bus":     "🚌 Bus (25+ Seats)",
+}
+VEHICLE_KEYS = {
+    "veh_tuk":     "tuk",
+    "veh_car":     "car",
+    "veh_minivan": "minivan",
+    "veh_van":     "van",
+    "veh_bus":     "bus",
+}
 
 
 def vehicle_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚗 Car",  callback_data="veh_car"),
-         InlineKeyboardButton("🛺 Tuk",  callback_data="veh_tuk")],
-        [InlineKeyboardButton("🏍️ Bike", callback_data="veh_bike"),
-         InlineKeyboardButton("🚐 Van",  callback_data="veh_van")],
+        [InlineKeyboardButton("🛺 Tuk (2 Seats)",    callback_data="veh_tuk"),
+         InlineKeyboardButton("🚗 Car (3 Seats)",    callback_data="veh_car")],
+        [InlineKeyboardButton("🚙 Mini Van (5 Seats)", callback_data="veh_minivan"),
+         InlineKeyboardButton("🚐 Van (10 Seats)",   callback_data="veh_van")],
+        [InlineKeyboardButton("🚌 Bus (25+ Seats)",  callback_data="veh_bus")],
     ])
 
 
-VEHICLE_LABELS = {
-    "veh_car":  "🚗 Car",
-    "veh_tuk":  "🛺 Tuk",
-    "veh_bike": "🏍️ Bike",
-    "veh_van":  "🚐 Van",
-}
-VEHICLE_KEYS = {
-    "veh_car":  "car",
-    "veh_tuk":  "tuk",
-    "veh_bike": "bike",
-    "veh_van":  "van",
-}
+def driver_dashboard_keyboard(is_muted: bool) -> ReplyKeyboardMarkup:
+    mute_btn = "🔔 Unmute (recommended)" if is_muted else "🔕 Mute"
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("📍 Check-in", request_location=True)],
+        [KeyboardButton(mute_btn)],
+        [KeyboardButton("🔧 Settings")],
+    ], resize_keyboard=True)
 
 
 # ─────────────────────────────────────────────
@@ -63,19 +66,25 @@ async def driver_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     driver = await db.get_driver(user.id)
 
     if driver:
-        # Already registered → show dashboard
         is_muted = driver["is_muted"]
         await update.message.reply_text(
-            "👌 Welcome back, driver!\n\nPlease choose an action from menu below 👇",
+            "👌 Welcome back, driver!\n\nPlease choose an action from the menu below 👇",
             reply_markup=driver_dashboard_keyboard(is_muted),
         )
         return ConversationHandler.END
 
-    # New driver → ask for phone
-    phone_btn = KeyboardButton("📱 Send Number", request_contact=True)
+    # New driver → start registration
+    return await _start_registration(update, context)
+
+
+async def _start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear old data and restart registration from scratch."""
+    context.user_data.clear()
+    phone_btn = KeyboardButton("📱 Share My Number", request_contact=True)
     await update.message.reply_text(
-        "Please send us your phone number. "
-        "We do not share this number without permission.",
+        "🚗 Driver Registration\n\n"
+        "We need a few details to register you as a PickRide driver.\n\n"
+        "Step 1/5 — Please share your phone number:",
         reply_markup=ReplyKeyboardMarkup(
             [[phone_btn]], resize_keyboard=True, one_time_keyboard=True
         ),
@@ -83,14 +92,41 @@ async def driver_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DRV_PHONE
 
 
+# ─────────────────────────────────────────────
+#  /regis command — full re-registration
+# ─────────────────────────────────────────────
+async def cmd_regis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /regis — Delete existing driver record and restart registration.
+    Works as if it's the first time.
+    """
+    user = update.effective_user
+    driver = await db.get_driver(user.id)
+
+    if driver:
+        # Delete driver record so they can re-register fresh
+        await db.delete_driver(user.id)
+
+    context.user_data.clear()
+    await update.message.reply_text(
+        "♻️ Your driver profile has been reset.\n\n"
+        "Starting fresh registration...",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return await _start_registration(update, context)
+
+
+# ─────────────────────────────────────────────
+#  Registration steps
+# ─────────────────────────────────────────────
 async def drv_receive_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact = update.message.contact
-    phone = contact.phone_number if contact else update.message.text
+    phone = contact.phone_number if contact else update.message.text.strip()
     context.user_data["drv_phone"] = phone
     await db.set_user_phone(update.effective_user.id, phone)
 
     await update.message.reply_text(
-        "Select your Vehicle Type:",
+        "✅ Phone saved!\n\nStep 2/5 — Select your vehicle type:",
         reply_markup=vehicle_inline_keyboard(),
     )
     return DRV_VEHICLE
@@ -100,13 +136,13 @@ async def drv_receive_vehicle(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
 
-    veh_key  = query.data                    # e.g. "veh_car"
-    veh_label = VEHICLE_LABELS[veh_key]      # e.g. "🚗 Car"
-    veh_type  = VEHICLE_KEYS[veh_key]        # e.g. "car"
+    veh_key   = query.data
+    veh_label = VEHICLE_LABELS.get(veh_key, veh_key)
+    veh_type  = VEHICLE_KEYS.get(veh_key, veh_key)
     context.user_data["drv_vehicle"] = veh_type
 
     await query.edit_message_text(
-        f"👌 {veh_label} selected!\n\n👤 Please enter your full name:"
+        f"✅ {veh_label} selected!\n\nStep 3/5 — Please enter your full name:"
     )
     return DRV_NAME
 
@@ -116,23 +152,22 @@ async def drv_receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["drv_name"] = name
 
     await update.message.reply_text(
-        f"PickRide:\n👌 Name set: *{name}*\n\n🔢 Please enter your vehicle plate number:",
-        parse_mode="Markdown",
+        f"✅ Name: {name}\n\nStep 4/5 — Enter your vehicle plate number:\n(Example: CAB-1234)",
         reply_markup=ReplyKeyboardRemove(),
     )
     return DRV_PLATE
 
 
 async def drv_receive_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    plate = update.message.text.strip()
+    plate = update.message.text.strip().upper()
     context.user_data["drv_plate"] = plate
 
     await update.message.reply_text(
-        f"👌 Plate number set: *{plate}*\n\n"
-        "Almost done. A few things to note: Telegram has no live GPS location support, "
-        "so every time you change location you need to check-in. "
-        "This will help us to find passengers around. Click \"Next\".",
-        parse_mode="Markdown",
+        f"✅ Plate: {plate}\n\n"
+        "Step 5/5 — Share your current location.\n\n"
+        "📌 Note: Telegram has no live GPS tracking, so you need to "
+        "check-in every time you change location. This helps passengers find you. "
+        "Tap Next to continue.",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("▶️ Next")]], resize_keyboard=True
         ),
@@ -142,8 +177,7 @@ async def drv_receive_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def drv_location_info_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Please share your current location (press the button) "
-        "or type address, so passengers around can find you.",
+        "📍 Please share your current location:",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("📍 Send Location", request_location=True)]],
             resize_keyboard=True,
@@ -162,7 +196,6 @@ async def drv_receive_location(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["drv_lat"] = loc.latitude
     context.user_data["drv_lon"] = loc.longitude
 
-    # Save driver to DB
     await db.upsert_driver(
         user_id=user.id,
         full_name=context.user_data["drv_name"],
@@ -172,8 +205,9 @@ async def drv_receive_location(update: Update, context: ContextTypes.DEFAULT_TYP
     await db.update_driver_location(user.id, loc.latitude, loc.longitude)
 
     await update.message.reply_text(
-        "We're all set! You'll be notified about passengers and orders nearby. "
-        "Keep this app running. Click \"Next\".",
+        "✅ Registration complete!\n\n"
+        "You'll be notified when passengers nearby request a ride. "
+        "Keep this app running and check-in when your location changes. Tap Next.",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("▶️ Next")]], resize_keyboard=True
         ),
@@ -184,9 +218,8 @@ async def drv_receive_location(update: Update, context: ContextTypes.DEFAULT_TYP
 async def drv_final_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
     driver = await db.get_driver(update.effective_user.id)
     is_muted = driver["is_muted"] if driver else False
-
     await update.message.reply_text(
-        "Please choose an action from menu below 👇",
+        "🚗 Driver Dashboard — Choose an action 👇",
         reply_markup=driver_dashboard_keyboard(is_muted),
     )
     return ConversationHandler.END
@@ -196,20 +229,18 @@ async def drv_final_next(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #  Dashboard actions
 # ─────────────────────────────────────────────
 async def drv_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle location shared via Check-in button."""
     loc = update.message.location
     user = update.effective_user
     if loc:
         await db.update_driver_location(user.id, loc.latitude, loc.longitude)
         driver = await db.get_driver(user.id)
         is_muted = driver["is_muted"] if driver else False
-
         await update.message.reply_text(
-            "👌 Thanks for checking-in! Check location above, if it's incorrect, "
-            "check-in again and then tap on paperclip-location (instead of pressing a button)."
+            "👌 Location updated! If incorrect, check-in again and use the "
+            "📎 attachment → Location option instead."
         )
         await update.message.reply_text(
-            "Please choose an action from menu below 👇",
+            "Driver Dashboard 👇",
             reply_markup=driver_dashboard_keyboard(is_muted),
         )
     else:
@@ -217,45 +248,37 @@ async def drv_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def drv_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await db.set_driver_mute(user.id, True)
+    await db.set_driver_mute(update.effective_user.id, True)
     await update.message.reply_text(
-        "⚠️ But keep in mind that you will NOT receive notifications "
-        "about passengers around until you unmute yourself.",
+        "🔕 Muted. You will NOT receive ride notifications until you unmute.",
         reply_markup=driver_dashboard_keyboard(is_muted=True),
     )
-    await update.message.reply_text("Please choose an action from menu below 👇")
 
 
 async def drv_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await db.set_driver_mute(user.id, False)
+    await db.set_driver_mute(update.effective_user.id, False)
     await update.message.reply_text(
-        "You're unmuted now and will receive notifications about passengers around you.",
+        "🔔 Unmuted! You will now receive nearby ride requests.",
         reply_markup=driver_dashboard_keyboard(is_muted=False),
     )
-    await update.message.reply_text("Please choose an action from menu below 👇")
 
 
 async def drv_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Return to main menu from driver settings."""
     user = update.effective_user
     await update.message.reply_text(
-        "Please choose an action from menu below 👇",
+        "Main menu 👇",
         reply_markup=await main_keyboard(user.id),
     )
 
 
 async def drv_update_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle 📍 Update My Location from main menu."""
     user = update.effective_user
     driver = await db.get_driver(user.id)
     if not driver:
         await update.message.reply_text("⚠️ You're not registered as a driver.")
         return
-
     await update.message.reply_text(
-        "Please share your current location to update your position:",
+        "Share your current location to update your position:",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("📍 Send Location", request_location=True)]],
             resize_keyboard=True,
@@ -268,18 +291,21 @@ async def drv_update_location(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ─────────────────────────────────────────────
 def driver_conv_handler() -> ConversationHandler:
     return ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^🚗 I'm a Driver$"), driver_entry)],
+        entry_points=[
+            MessageHandler(filters.Regex("^🚗 I'm a Driver$"), driver_entry),
+            CommandHandler("regis", cmd_regis),
+        ],
         states={
             DRV_PHONE: [
                 MessageHandler(filters.CONTACT, drv_receive_phone),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, drv_receive_phone),
             ],
             DRV_VEHICLE: [CallbackQueryHandler(drv_receive_vehicle, pattern="^veh_")],
-            DRV_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, drv_receive_name)],
-            DRV_PLATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, drv_receive_plate)],
+            DRV_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, drv_receive_name)],
+            DRV_PLATE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, drv_receive_plate)],
             DRV_LOCATION_INFO: [MessageHandler(filters.Regex("^▶️ Next$"), drv_location_info_next)],
-            DRV_LOCATION: [MessageHandler(filters.LOCATION, drv_receive_location)],
-            DRV_DONE: [MessageHandler(filters.Regex("^▶️ Next$"), drv_final_next)],
+            DRV_LOCATION:      [MessageHandler(filters.LOCATION, drv_receive_location)],
+            DRV_DONE:          [MessageHandler(filters.Regex("^▶️ Next$"), drv_final_next)],
         },
         fallbacks=[CommandHandler("cancel", cmd_cancel)],
         allow_reentry=True,

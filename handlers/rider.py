@@ -8,35 +8,39 @@ from telegram.ext import (
 )
 
 import database as db
+from config import GOOGLE_MAPS_API_KEY
 from handlers.start import main_keyboard, cmd_cancel
 from utils.geocoding import reverse_geocode, search_location
-from utils.distance import haversine
+from utils.distance import haversine, get_road_distance
 from utils.fare import calculate_fare
 
 # ── Conversation states ───────────────────────────────────────────────────────
 (
     RIDER_VEHICLE,
     RIDER_PICKUP,
+    RIDER_PICKUP_SELECT,
     RIDER_DEST_INPUT,
     RIDER_DEST_SELECT,
     RIDER_CONFIRM,
-) = range(20, 25)
+) = range(20, 26)
 
 
 def vehicle_inline_keyboard_rider() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚗 Car (3-4 Seats)",  callback_data="rveh_car")],
-        [InlineKeyboardButton("🛺 Tuk (2-3 Seats)",  callback_data="rveh_tuk")],
-        [InlineKeyboardButton("🏍️ Bike (1 Seat)",    callback_data="rveh_bike")],
-        [InlineKeyboardButton("🚐 Van (5+ Seats)",   callback_data="rveh_van")],
+        [InlineKeyboardButton("🛺 Tuk (2 Seats)",      callback_data="rveh_tuk"),
+         InlineKeyboardButton("🚗 Car (3 Seats)",      callback_data="rveh_car")],
+        [InlineKeyboardButton("🚙 Mini Van (5 Seats)", callback_data="rveh_minivan"),
+         InlineKeyboardButton("🚐 Van (10 Seats)",     callback_data="rveh_van")],
+        [InlineKeyboardButton("🚌 Bus (25+ Seats)",    callback_data="rveh_bus")],
     ])
 
 
 RVEH_LABELS = {
-    "rveh_car":  ("🚗 Car",  "car"),
-    "rveh_tuk":  ("🛺 Tuk",  "tuk"),
-    "rveh_bike": ("🏍️ Bike", "bike"),
-    "rveh_van":  ("🚐 Van",  "van"),
+    "rveh_tuk":     ("🛺 Tuk",     "tuk"),
+    "rveh_car":     ("🚗 Car",     "car"),
+    "rveh_minivan": ("🚙 Mini Van", "minivan"),
+    "rveh_van":     ("🚐 Van",     "van"),
+    "rveh_bus":     ("🚌 Bus",     "bus"),
 }
 
 
@@ -86,7 +90,9 @@ async def rider_vehicle_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     await query.edit_message_text(label + " selected! ✅")
     await query.message.reply_text(
-        "📍 Share your pickup location:",
+        "📍 Where is your pickup location?\n\n"
+        "• 📌 Tap the button to share your GPS location\n"
+        "• ✏️ Or type the pickup place name (e.g. Colombo Fort)",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("📍 Send My Location", request_location=True)]],
             resize_keyboard=True,
@@ -108,10 +114,78 @@ async def rider_pickup_received(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["pickup_name"] = pickup_name
 
     await update.message.reply_text(
+        f"✅ Pickup set: {pickup_name}\n\n"
         "🏁 Where do you want to go?\n\n"
-        "Type the place name or address in English.\n"
-        "Example: Colombo Fort, Kandy, Galle\n\n"
-        "Or tap 📎 attachment button → Location to pin on map.",
+        "Type the place name in English (e.g. Kandy, Galle Fort)\n"
+        "Or tap 📎 → Location to pin on map.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return RIDER_DEST_INPUT
+
+
+async def rider_pickup_text_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Let rider type a pickup location name instead of sharing GPS."""
+    query_text = update.message.text.strip()
+    if not query_text:
+        return RIDER_PICKUP
+
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    results = await search_location(query_text)
+
+    if not results:
+        await update.message.reply_text(
+            "❌ No pickup locations found for: " + query_text + "\n\n"
+            "Try a different name, or use the 📍 Send My Location button."
+        )
+        return RIDER_PICKUP
+
+    context.user_data["pickup_results"] = results
+    buttons = []
+    for i, r in enumerate(results):
+        buttons.append([InlineKeyboardButton(
+            str(i + 1) + ". " + r["name"], callback_data="pickup_" + str(i)
+        )])
+    buttons.append([InlineKeyboardButton("🔍 Search Again", callback_data="pickup_retry")])
+
+    await update.message.reply_text(
+        "📍 Found " + str(len(results)) + " pickup locations:\nChoose yours:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    return RIDER_PICKUP_SELECT
+
+
+async def rider_pickup_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Rider selected pickup from search results list."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "pickup_retry":
+        await query.edit_message_text(
+            "🔍 Type the pickup place name:",
+        )
+        return RIDER_PICKUP
+
+    idx = int(query.data.split("_")[1])
+    results = context.user_data.get("pickup_results", [])
+    if idx >= len(results):
+        await query.edit_message_text("⚠️ Invalid selection. Please try again.")
+        return RIDER_PICKUP
+
+    selected = results[idx]
+    context.user_data["pickup_lat"]  = selected["lat"]
+    context.user_data["pickup_lon"]  = selected["lon"]
+    context.user_data["pickup_name"] = selected["full_name"]
+
+    try:
+        await query.message.reply_location(latitude=selected["lat"], longitude=selected["lon"])
+    except Exception:
+        pass
+
+    await query.edit_message_text("✅ Pickup set: " + selected["name"])
+    await query.message.reply_text(
+        "🏁 Where do you want to go?\n\n"
+        "Type the destination name in English (e.g. Kandy, Galle Fort)\n"
+        "Or tap 📎 → Location to pin on map.",
         reply_markup=ReplyKeyboardRemove(),
     )
     return RIDER_DEST_INPUT
@@ -214,25 +288,38 @@ async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
     dropoff_name = ud.get("dropoff_name", "Drop-off")
     vehicle_label = ud.get("rider_vehicle_label", "Car")
 
+    # Try Google Maps first, fallback to Haversine×1.3
     cached = await db.get_cached_route(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon)
     if cached:
         dist = cached["distance_km"]
         fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(dist)
+        dist_method = "cached"
     else:
-        dist = haversine(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon)
-        dist = round(dist, 2)
+        dist, dist_method = await get_road_distance(
+            pickup_lat, pickup_lon, dropoff_lat, dropoff_lon,
+            api_key=GOOGLE_MAPS_API_KEY,
+        )
         fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(dist)
-        await db.set_cached_route(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, dist, fare)
+        await db.set_cached_route(
+            pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, dist, fare
+        )
 
     ud["est_distance"] = dist
     ud["est_fare"]     = fare
+
+    # Show distance source indicator
+    dist_note = ""
+    if dist_method == "google":
+        dist_note = " (road)"
+    elif dist_method == "haversine":
+        dist_note = " (est.)"
 
     text = (
         "🚕 PickRide — Fare Estimate\n\n"
         "📍 Pickup:   " + pickup_name + "\n"
         "🏁 Drop-off: " + dropoff_name + "\n"
         "🚗 Vehicle:  " + vehicle_label + "\n\n"
-        "✏ Distance: " + str(dist) + " km\n"
+        "✏ Distance: " + str(dist) + " km" + dist_note + "\n"
         "💵 Rate: First " + str(base_km) + " km = LKR " + str(base_fare) +
         ", then LKR " + str(per_km) + "/km\n"
         "💰 Total Fare: LKR " + str(fare) + "\n\n"
@@ -386,6 +473,12 @@ def rider_conv_handler() -> ConversationHandler:
                 CallbackQueryHandler(rider_vehicle_selected, pattern="^rveh_"),
             ],
             RIDER_PICKUP: [
+                MessageHandler(filters.LOCATION, rider_pickup_received),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, rider_pickup_text_search),
+            ],
+            RIDER_PICKUP_SELECT: [
+                CallbackQueryHandler(rider_pickup_selected, pattern="^pickup_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, rider_pickup_text_search),
                 MessageHandler(filters.LOCATION, rider_pickup_received),
             ],
             RIDER_DEST_INPUT: [

@@ -248,6 +248,16 @@ async def get_driver(user_id: int):
         return await conn.fetchrow("SELECT * FROM drivers WHERE user_id=$1", user_id)
 
 
+async def delete_driver(user_id: int):
+    """Delete driver record — used by /regis to allow full re-registration."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM drivers WHERE user_id=$1", user_id)
+        await conn.execute(
+            "UPDATE users SET role='rider' WHERE user_id=$1", user_id
+        )
+
+
 async def update_driver_location(user_id: int, lat: float, lon: float):
     pool = await get_pool()
     async with pool.acquire() as conn:

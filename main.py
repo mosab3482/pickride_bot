@@ -15,7 +15,7 @@ from config import BOT_TOKEN
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 from handlers.start import (
-    cmd_start, handle_help, cmd_cancel, cmd_cancel_ride, cmd_regis,
+    cmd_start, handle_help, cmd_cancel, cmd_cancel_ride,
     main_keyboard,
 )
 from handlers.driver import (
@@ -165,7 +165,7 @@ def main():
     app.add_handler(CommandHandler("start",      cmd_start))
     app.add_handler(CommandHandler("cancel",     cmd_cancel))
     app.add_handler(CommandHandler("cancelride", cmd_cancel_ride))
-    app.add_handler(CommandHandler("regis",      cmd_regis))
+    # NOTE: /regis is handled inside driver_conv_handler() as an entry_point
 
     # ── Conversation handlers ─────────────────────
     # Group 0: ConversationHandlers - highest priority for active conversations

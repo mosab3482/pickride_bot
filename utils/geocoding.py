@@ -3,26 +3,28 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────
-#  In-memory reverse-geocode cache
-# ─────────────────────────────────────────────
+# ── In-memory reverse geocode cache ──────────────────────────────────────────
 _geo_cache: dict[tuple, str] = {}
 
-# ─── API endpoints ───────────────────────────
+# ── Sri Lanka bounding box (geo-fence) ───────────────────────────────────────
+# Any result outside this box is filtered out
+_SL_LAT_MIN, _SL_LAT_MAX = 5.7, 10.0
+_SL_LON_MIN, _SL_LON_MAX = 79.5, 82.0
+
+# ── API endpoints ─────────────────────────────────────────────────────────────
 NOMINATIM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
 PHOTON_SEARCH     = "https://photon.komoot.io/api/"
 NOMINATIM_SEARCH  = "https://nominatim.openstreetmap.org/search"
 
-# Nominatim requires a valid User-Agent with real app + contact info
 NOMINATIM_HEADERS = {
-    "User-Agent": "PickRideBot/2.0 contact:pickride.app@gmail.com",
+    "User-Agent":    "PickRideBot/2.0 contact:pickride.app@gmail.com",
     "Accept-Language": "en",
 }
+PHOTON_HEADERS = {"User-Agent": "PickRideBot/2.0"}
 
-# Photon (by Komoot) — no auth required
-PHOTON_HEADERS = {
-    "User-Agent": "PickRideBot/2.0",
-}
+
+def _in_sri_lanka(lat: float, lon: float) -> bool:
+    return _SL_LAT_MIN <= lat <= _SL_LAT_MAX and _SL_LON_MIN <= lon <= _SL_LON_MAX
 
 
 def _round_coords(lat: float, lon: float, decimals: int = 3) -> tuple:
@@ -30,10 +32,9 @@ def _round_coords(lat: float, lon: float, decimals: int = 3) -> tuple:
 
 
 # ─────────────────────────────────────────────
-#  REVERSE GEOCODING  (coords → name)
+#  REVERSE GEOCODING
 # ─────────────────────────────────────────────
 async def reverse_geocode(lat: float, lon: float) -> str:
-    """Return a human-readable name for given coordinates."""
     cache_key = _round_coords(lat, lon)
     if cache_key in _geo_cache:
         return _geo_cache[cache_key]
@@ -43,42 +44,28 @@ async def reverse_geocode(lat: float, lon: float) -> str:
         or await _reverse_via_photon(lat, lon)
         or f"{lat:.4f}, {lon:.4f}"
     )
-
     _geo_cache[cache_key] = result
     return result
 
 
 async def _reverse_via_nominatim(lat: float, lon: float) -> str | None:
-    params = {
-        "lat": lat,
-        "lon": lon,
-        "format": "json",
-        "zoom": 14,
-        "addressdetails": 1,
-    }
+    params = {"lat": lat, "lon": lon, "format": "json", "zoom": 14, "addressdetails": 1}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                NOMINATIM_REVERSE,
-                params=params,
-                headers=NOMINATIM_HEADERS,
+                NOMINATIM_REVERSE, params=params, headers=NOMINATIM_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=6),
             ) as resp:
                 if resp.status != 200:
-                    logger.warning(f"Nominatim reverse {resp.status}")
                     return None
                 data = await resp.json(content_type=None)
-
         addr = data.get("address", {})
         area = (
             addr.get("suburb") or addr.get("neighbourhood") or
             addr.get("village") or addr.get("town") or
             addr.get("city") or addr.get("county") or "Unknown Area"
         )
-        district = (
-            addr.get("state_district") or addr.get("state") or
-            addr.get("country") or ""
-        )
+        district = addr.get("state_district") or addr.get("state") or addr.get("country") or ""
         return f"{area}, {district}" if district else area
     except Exception as e:
         logger.warning(f"Nominatim reverse error: {e}")
@@ -86,20 +73,17 @@ async def _reverse_via_nominatim(lat: float, lon: float) -> str | None:
 
 
 async def _reverse_via_photon(lat: float, lon: float) -> str | None:
-    """Reverse geocode using Photon (fallback)."""
-    params = {"lat": lat, "lon": lon, "limit": 1, "lang": "en"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 "https://photon.komoot.io/reverse",
-                params=params,
+                params={"lat": lat, "lon": lon, "limit": 1, "lang": "en"},
                 headers=PHOTON_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=6),
             ) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json(content_type=None)
-
         features = data.get("features", [])
         if not features:
             return None
@@ -117,119 +101,118 @@ async def _reverse_via_photon(lat: float, lon: float) -> str | None:
 
 # ─────────────────────────────────────────────
 #  FORWARD SEARCH  (text → list of places)
+#  Geo-fenced to Sri Lanka
 # ─────────────────────────────────────────────
 async def search_location(query: str) -> list[dict]:
     """
-    Search for a location by text.
-    Returns list of {'name': str, 'lat': float, 'lon': float}
-    Tries Photon first (no API key, no rate-limit issues),
-    then falls back to Nominatim.
+    Search for a place by name — Sri Lanka only.
+    Uses Photon first, then Nominatim as fallback.
     """
     results = await _search_via_photon(query)
     if not results:
-        logger.info(f"Photon returned no results for '{query}', trying Nominatim…")
+        logger.info(f"Photon empty for '{query}', trying Nominatim…")
         results = await _search_via_nominatim(query)
     return results
 
 
 async def _search_via_photon(query: str) -> list[dict]:
     """
-    Photon by Komoot → https://photon.komoot.io/
-    Completely free, no key, reliable.
+    Photon search restricted to Sri Lanka bounding box.
+    bbox = lon_min,lat_min,lon_max,lat_max
     """
     params = {
-        "q": query,
-        "limit": 6,
+        "q":    query,
+        "limit": 8,
         "lang": "en",
+        # Bias results to center of Sri Lanka
+        "lat":  7.8731,
+        "lon":  80.7718,
+        # Bounding box filter: only Sri Lanka
+        "bbox": f"{_SL_LON_MIN},{_SL_LAT_MIN},{_SL_LON_MAX},{_SL_LAT_MAX}",
     }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                PHOTON_SEARCH,
-                params=params,
-                headers=PHOTON_HEADERS,
+                PHOTON_SEARCH, params=params, headers=PHOTON_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
-                logger.info(f"Photon search status: {resp.status} for '{query}'")
                 if resp.status != 200:
                     return []
                 data = await resp.json(content_type=None)
 
         results = []
         for feat in data.get("features", []):
-            props = feat.get("properties", {})
+            props  = feat.get("properties", {})
             coords = feat.get("geometry", {}).get("coordinates", [])
             if len(coords) < 2:
                 continue
+            lon_val, lat_val = float(coords[0]), float(coords[1])
 
-            lon_val, lat_val = coords[0], coords[1]
+            # Hard geo-fence: skip anything outside Sri Lanka
+            if not _in_sri_lanka(lat_val, lon_val):
+                continue
 
-            # Build a readable name
             name_parts = []
             if props.get("name"):
                 name_parts.append(props["name"])
-            if props.get("city") or props.get("town") or props.get("village"):
-                name_parts.append(
-                    props.get("city") or props.get("town") or props.get("village")
-                )
+            city = props.get("city") or props.get("town") or props.get("village")
+            if city:
+                name_parts.append(city)
             if props.get("state"):
                 name_parts.append(props["state"])
-            if props.get("country"):
-                name_parts.append(props["country"])
 
             display = ", ".join(name_parts) if name_parts else query
-            short_name = display[:70] + ("…" if len(display) > 70 else "")
-
             results.append({
-                "name": short_name,
+                "name":      display[:70] + ("…" if len(display) > 70 else ""),
                 "full_name": display,
-                "lat": float(lat_val),
-                "lon": float(lon_val),
+                "lat":       lat_val,
+                "lon":       lon_val,
             })
 
-        logger.info(f"Photon found {len(results)} results for '{query}'")
+        logger.info(f"Photon found {len(results)} Sri Lanka results for '{query}'")
         return results
 
     except Exception as e:
-        logger.warning(f"Photon search error for '{query}': {e}")
+        logger.warning(f"Photon search error: {e}")
         return []
 
 
 async def _search_via_nominatim(query: str) -> list[dict]:
-    """Nominatim search fallback."""
+    """Nominatim search — Sri Lanka only via countrycodes filter."""
     params = {
-        "q": query,
-        "format": "json",
-        "limit": 5,
+        "q":            query,
+        "format":       "json",
+        "limit":        6,
         "addressdetails": 1,
+        "countrycodes": "lk",   # Sri Lanka ISO code
     }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                NOMINATIM_SEARCH,
-                params=params,
-                headers=NOMINATIM_HEADERS,
+                NOMINATIM_SEARCH, params=params, headers=NOMINATIM_HEADERS,
                 timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
-                logger.info(f"Nominatim search status: {resp.status} for '{query}'")
                 if resp.status != 200:
                     return []
                 data = await resp.json(content_type=None)
 
         results = []
         for item in data:
+            lat_val = float(item["lat"])
+            lon_val = float(item["lon"])
+            if not _in_sri_lanka(lat_val, lon_val):
+                continue
             display = item.get("display_name", "Unknown")
-            short_name = display[:70] + ("…" if len(display) > 70 else "")
             results.append({
-                "name": short_name,
+                "name":      display[:70] + ("…" if len(display) > 70 else ""),
                 "full_name": display,
-                "lat": float(item["lat"]),
-                "lon": float(item["lon"]),
+                "lat":       lat_val,
+                "lon":       lon_val,
             })
 
-        logger.info(f"Nominatim found {len(results)} results for '{query}'")
+        logger.info(f"Nominatim found {len(results)} Sri Lanka results for '{query}'")
         return results
 
     except Exception as e:
-        logger.warning(f"Nominatim search error for '{query}': {e}")
+        logger.warning(f"Nominatim search error: {e}")
         return []
