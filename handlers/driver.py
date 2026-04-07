@@ -24,6 +24,7 @@ from handlers.start import main_keyboard, cmd_cancel
 
 # ── Updated vehicle types ─────────────────────────────────────────────────────
 VEHICLE_LABELS = {
+    "veh_bike":    "🏍️ Bike (1 Seat)",
     "veh_tuk":     "🛺 Tuk (2 Seats)",
     "veh_car":     "🚗 Car (3 Seats)",
     "veh_minivan": "🚙 Mini Van (5 Seats)",
@@ -31,6 +32,7 @@ VEHICLE_LABELS = {
     "veh_bus":     "🚌 Bus (25+ Seats)",
 }
 VEHICLE_KEYS = {
+    "veh_bike":    "bike",
     "veh_tuk":     "tuk",
     "veh_car":     "car",
     "veh_minivan": "minivan",
@@ -41,11 +43,12 @@ VEHICLE_KEYS = {
 
 def vehicle_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛺 Tuk (2 Seats)",    callback_data="veh_tuk"),
-         InlineKeyboardButton("🚗 Car (3 Seats)",    callback_data="veh_car")],
-        [InlineKeyboardButton("🚙 Mini Van (5 Seats)", callback_data="veh_minivan"),
-         InlineKeyboardButton("🚐 Van (10 Seats)",   callback_data="veh_van")],
-        [InlineKeyboardButton("🚌 Bus (25+ Seats)",  callback_data="veh_bus")],
+        [InlineKeyboardButton("🏍️ Bike (1 Seat)",    callback_data="veh_bike"),
+         InlineKeyboardButton("🛺 Tuk (2 Seats)",    callback_data="veh_tuk")],
+        [InlineKeyboardButton("🚗 Car (3 Seats)",    callback_data="veh_car"),
+         InlineKeyboardButton("🚙 Mini Van (5 Seats)", callback_data="veh_minivan")],
+        [InlineKeyboardButton("🚐 Van (10 Seats)",   callback_data="veh_van"),
+         InlineKeyboardButton("🚌 Bus (25+ Seats)",  callback_data="veh_bus")],
     ])
 
 

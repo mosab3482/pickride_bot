@@ -27,15 +27,17 @@ from utils.fare import calculate_fare
 
 def vehicle_inline_keyboard_rider() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛺 Tuk (2 Seats)",      callback_data="rveh_tuk"),
-         InlineKeyboardButton("🚗 Car (3 Seats)",      callback_data="rveh_car")],
-        [InlineKeyboardButton("🚙 Mini Van (5 Seats)", callback_data="rveh_minivan"),
-         InlineKeyboardButton("🚐 Van (10 Seats)",     callback_data="rveh_van")],
-        [InlineKeyboardButton("🚌 Bus (25+ Seats)",    callback_data="rveh_bus")],
+        [InlineKeyboardButton("🏍️ Bike (1 Seat)",    callback_data="rveh_bike"),
+         InlineKeyboardButton("🛺 Tuk (2 Seats)",    callback_data="rveh_tuk")],
+        [InlineKeyboardButton("🚗 Car (3 Seats)",    callback_data="rveh_car"),
+         InlineKeyboardButton("🚙 Mini Van (5 Seats)", callback_data="rveh_minivan")],
+        [InlineKeyboardButton("🚐 Van (10 Seats)",   callback_data="rveh_van"),
+         InlineKeyboardButton("🚌 Bus (25+ Seats)",  callback_data="rveh_bus")],
     ])
 
 
 RVEH_LABELS = {
+    "rveh_bike":    ("🏍️ Bike",    "bike"),
     "rveh_tuk":     ("🛺 Tuk",     "tuk"),
     "rveh_car":     ("🚗 Car",     "car"),
     "rveh_minivan": ("🚙 Mini Van", "minivan"),
