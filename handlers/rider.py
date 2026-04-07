@@ -257,46 +257,68 @@ async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
 
 async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    logger = __import__("logging").getLogger(__name__)
 
-    if query.data == "ride_cancel":
-        await query.edit_message_text("❌ Ride request cancelled.")
-        await query.message.reply_text(
-            "Back to main menu:",
-            reply_markup=await main_keyboard(update.effective_user.id),
-        )
-        context.user_data.clear()
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.error(f"rider_confirm: query.answer() failed: {e}")
         return ConversationHandler.END
 
-    # Guard: ensure ride data is still in context
-    ud = context.user_data
-    required = ["rider_vehicle", "pickup_lat", "pickup_lon",
-                "dropoff_lat", "dropoff_lon", "est_distance", "est_fare"]
-    if not all(k in ud for k in required):
-        await query.edit_message_text(
-            "⚠️ Session expired. Please start a new ride request.\n\n"
-            "Tap 🚕 Request Ride from the main menu."
-        )
-        await query.message.reply_text(
-            "Back to main menu:",
-            reply_markup=await main_keyboard(update.effective_user.id),
-        )
+    try:
+        if query.data == "ride_cancel":
+            await query.edit_message_text("❌ Ride request cancelled.")
+            await query.message.reply_text(
+                "Back to main menu:",
+                reply_markup=await main_keyboard(update.effective_user.id),
+            )
+            context.user_data.clear()
+            return ConversationHandler.END
+
+        # Guard: ensure ride data is still in context
+        ud = context.user_data
+        required = ["rider_vehicle", "pickup_lat", "pickup_lon",
+                    "dropoff_lat", "dropoff_lon", "est_distance", "est_fare"]
+        if not all(k in ud for k in required):
+            await query.edit_message_text(
+                "⚠️ Session expired. Please start a new ride request.\n\n"
+                "Tap 🚕 Request Ride from the main menu."
+            )
+            await query.message.reply_text(
+                "Back to main menu:",
+                reply_markup=await main_keyboard(update.effective_user.id),
+            )
+            return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"rider_confirm setup error: {e}", exc_info=True)
+        try:
+            await query.message.reply_text("Error processing request. Please try again.")
+        except Exception:
+            pass
         return ConversationHandler.END
 
     user = update.effective_user
 
-    ride_id = await db.create_ride(
-        rider_id=user.id,
-        vehicle_type=ud["rider_vehicle"],
-        pickup_lat=ud["pickup_lat"],
-        pickup_lon=ud["pickup_lon"],
-        dropoff_lat=ud["dropoff_lat"],
-        dropoff_lon=ud["dropoff_lon"],
-        pickup_name=ud.get("pickup_name", "Unknown"),
-        dropoff_name=ud.get("dropoff_name", "Unknown"),
-        distance_km=ud["est_distance"],
-        fare=ud["est_fare"],
-    )
+    try:
+        ride_id = await db.create_ride(
+            rider_id=user.id,
+            vehicle_type=ud["rider_vehicle"],
+            pickup_lat=ud["pickup_lat"],
+            pickup_lon=ud["pickup_lon"],
+            dropoff_lat=ud["dropoff_lat"],
+            dropoff_lon=ud["dropoff_lon"],
+            pickup_name=ud.get("pickup_name", "Unknown"),
+            dropoff_name=ud.get("dropoff_name", "Unknown"),
+            distance_km=ud["est_distance"],
+            fare=ud["est_fare"],
+        )
+    except Exception as e:
+        logger.error(f"rider_confirm: create_ride failed: {e}", exc_info=True)
+        await query.message.reply_text(
+            "Failed to create ride (database error). Please try again or use /start."
+        )
+        return ConversationHandler.END
 
     await query.edit_message_text(
         "✅ Ride #" + str(ride_id) + " created!\n\n"

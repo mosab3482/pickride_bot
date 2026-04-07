@@ -1,10 +1,9 @@
 import logging
 import asyncio
-import signal
-
-from telegram.error import NetworkError
+import traceback
 
 from telegram import Update, BotCommand
+from telegram.error import NetworkError, TelegramError
 from telegram.ext import (
     Application, ApplicationBuilder,
     CommandHandler, MessageHandler, CallbackQueryHandler,
@@ -23,7 +22,7 @@ from handlers.driver import (
     driver_conv_handler,
     drv_checkin, drv_mute, drv_unmute, drv_settings, drv_update_location,
 )
-from handlers.rider import rider_conv_handler
+from handlers.rider import rider_conv_handler, rider_confirm
 from handlers.trip import (
     accept_ride_callback,
     start_trip_callback,
@@ -35,7 +34,6 @@ from handlers.trip import (
     live_location_update,
     rating_callback,
 )
-from handlers.rider import rider_confirm
 from handlers.admin import (
     admin_entry, admin_callback, admin_text_input,
 )
@@ -48,13 +46,41 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
+#  Global Error Handler — surfaces silent crashes
+# ─────────────────────────────────────────────
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log errors and notify user when possible."""
+    err = context.error
+    tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+    logger.error(f"Exception while handling update:\n{tb}")
+
+    # Try to reply to the user so they know something went wrong
+    if isinstance(update, Update):
+        msg = None
+        if update.callback_query:
+            try:
+                await update.callback_query.answer("An error occurred. Please try again.")
+            except Exception:
+                pass
+            msg = update.callback_query.message
+        elif update.message:
+            msg = update.message
+
+        if msg:
+            try:
+                await msg.reply_text(
+                    "Something went wrong. Please try again or use /start to restart."
+                )
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────
 #  Boot
 # ─────────────────────────────────────────────
 async def post_init(app: Application):
     await db.init_db()
-    # Clean expired route cache on startup
     await db.cleanup_expired_cache()
-    # Retry set_my_commands up to 3 times (transient network errors)
     for attempt in range(1, 4):
         try:
             await app.bot.set_my_commands([
@@ -66,45 +92,51 @@ async def post_init(app: Application):
             break
         except NetworkError as e:
             logger.warning(f"set_my_commands attempt {attempt}/3 failed: {e}")
-            if attempt == 3:
-                logger.error("Could not set bot commands after 3 attempts, continuing anyway...")
-            else:
+            if attempt < 3:
                 await asyncio.sleep(2)
     logger.info("PickRide Bot is ready.")
 
 
 async def post_shutdown(app: Application):
-    """Graceful shutdown — close database pool."""
     logger.info("Shutting down PickRide Bot...")
     await db.close_pool()
     logger.info("Database pool closed.")
 
 
 # ─────────────────────────────────────────────
-#  Trip end text router (meter input + waiting)
+#  Trip end text router
 # ─────────────────────────────────────────────
 async def _trip_end_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Route text messages for the trip end flow:
-    1. If driver is entering meter distance → handle_meter_distance
-    2. If driver is entering waiting time → handle_waiting_time
-    3. If admin is awaiting input → admin_text_input
-    4. Otherwise → ignore
-    """
-    # Step 1: Check if driver is entering meter distance
     if context.user_data.get("ending_ride"):
         handled = await handle_meter_distance(update, context)
         if handled:
             return
 
-    # Step 2: Check if driver is entering waiting time
     if context.user_data.get("awaiting_waiting"):
         handled = await handle_waiting_time(update, context)
         if handled:
             return
 
-    # Step 3: Admin text input (only if admin is awaiting)
     await admin_text_input(update, context)
+
+
+# ─────────────────────────────────────────────
+#  Location router
+# ─────────────────────────────────────────────
+async def _location_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("starting_ride"):
+        await handle_start_trip_location(update, context)
+        return
+
+    user_id = update.effective_user.id
+    active = await db.get_active_ride_for_driver(user_id)
+    if active and active["status"] == "in_progress":
+        await live_location_update(update, context)
+        return
+
+    driver = await db.get_driver(user_id)
+    if driver:
+        await drv_checkin(update, context)
 
 
 # ─────────────────────────────────────────────
@@ -126,29 +158,34 @@ def main():
         .build()
     )
 
+    # ── Global error handler ─────────────────────
+    app.add_error_handler(error_handler)
+
     # ── Commands ─────────────────────────────────
     app.add_handler(CommandHandler("start",      cmd_start))
     app.add_handler(CommandHandler("cancel",     cmd_cancel))
     app.add_handler(CommandHandler("cancelride", cmd_cancel_ride))
     app.add_handler(CommandHandler("regis",      cmd_regis))
 
-    # ── Conversation handlers (order matters!) ───
-    app.add_handler(driver_conv_handler())   # Driver registration FSM
-    app.add_handler(rider_conv_handler())    # Rider request FSM
+    # ── Conversation handlers ─────────────────────
+    # Group 0: ConversationHandlers - highest priority for active conversations
+    app.add_handler(driver_conv_handler(), group=0)
+    app.add_handler(rider_conv_handler(),  group=0)
 
-    # ── Callback queries ─────────────────────────
-    app.add_handler(CallbackQueryHandler(accept_ride_callback,   pattern=r"^accept_\d+$"))
-    app.add_handler(CallbackQueryHandler(start_trip_callback,    pattern=r"^starttrip_\d+$"))
-    app.add_handler(CallbackQueryHandler(share_location_callback,pattern=r"^shareloc_\d+$"))
-    app.add_handler(CallbackQueryHandler(rating_callback,        pattern=r"^rate_\d+_\d+$"))
+    # ── ride_confirm fallback in Group 0 AFTER conv handlers ─────────────────
+    # When ConversationHandler has RIDER_CONFIRM state active, it intercepts first.
+    # When state is lost (bot restart), this global handler catches it.
+    app.add_handler(
+        CallbackQueryHandler(rider_confirm, pattern=r"^ride_(confirm|cancel)$"),
+        group=0
+    )
 
-    # ── Admin callbacks ──────────────────────────
-    app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^adm_"))
-
-    # ── Fallback for ride confirm/cancel (handles post-restart sessions) ──────
-    # ConversationHandler handles this first when state is active.
-    # This global handler catches it if bot restarted and state was lost.
-    app.add_handler(CallbackQueryHandler(rider_confirm, pattern=r"^ride_(confirm|cancel)$"))
+    # ── All other callback queries in Group 1 ────
+    app.add_handler(CallbackQueryHandler(accept_ride_callback,    pattern=r"^accept_\d+$"),  group=1)
+    app.add_handler(CallbackQueryHandler(start_trip_callback,     pattern=r"^starttrip_\d+$"), group=1)
+    app.add_handler(CallbackQueryHandler(share_location_callback, pattern=r"^shareloc_\d+$"), group=1)
+    app.add_handler(CallbackQueryHandler(rating_callback,         pattern=r"^rate_\d+_\d+$"), group=1)
+    app.add_handler(CallbackQueryHandler(admin_callback,          pattern=r"^adm_"),          group=1)
 
     # ── Main menu text buttons ───────────────────
     app.add_handler(MessageHandler(filters.Regex("^ℹ️ Help$"),                handle_help))
@@ -157,21 +194,18 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^📍 Update My Location$"),  drv_update_location))
 
     # ── Driver dashboard buttons ─────────────────
-    app.add_handler(MessageHandler(filters.Regex("^🔕 Mute$"),                drv_mute))
-    app.add_handler(MessageHandler(filters.Regex("^🔔 Unmute"),               drv_unmute))
-    app.add_handler(MessageHandler(filters.Regex("^🔧 Settings$"),            drv_settings))
-    app.add_handler(MessageHandler(filters.Regex("^🟩 End Trip$"),            handle_end_trip))
+    app.add_handler(MessageHandler(filters.Regex("^🔕 Mute$"),   drv_mute))
+    app.add_handler(MessageHandler(filters.Regex("^🔔 Unmute"),  drv_unmute))
+    app.add_handler(MessageHandler(filters.Regex("^🔧 Settings$"), drv_settings))
+    app.add_handler(MessageHandler(filters.Regex("^🟩 End Trip$"), handle_end_trip))
 
     # ── Location messages ────────────────────────
-    # Priority: trip start location → live update → driver check-in
     app.add_handler(MessageHandler(
         filters.LOCATION & ~filters.UpdateType.EDITED_MESSAGE,
         _location_router,
     ))
 
-    # ── Text input router (trip end + admin) ─────
-    # This MUST be last — catches all non-command text
-    # Routes to: meter input → waiting time → admin input
+    # ── Text input router ────────────────────────
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
         _trip_end_text_router,
@@ -179,26 +213,6 @@ def main():
 
     logger.info("Starting PickRide Bot...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
-
-async def _location_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Route location messages to the correct handler based on context."""
-    # 1. Check if driver is in "starting_ride" state
-    if context.user_data.get("starting_ride"):
-        await handle_start_trip_location(update, context)
-        return
-
-    # 2. Check if driver has active in_progress trip → live tracking
-    user_id = update.effective_user.id
-    active = await db.get_active_ride_for_driver(user_id)
-    if active and active["status"] == "in_progress":
-        await live_location_update(update, context)
-        return
-
-    # 3. Driver check-in (dashboard)
-    driver = await db.get_driver(user_id)
-    if driver:
-        await drv_checkin(update, context)
 
 
 if __name__ == "__main__":
