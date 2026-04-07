@@ -82,14 +82,6 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         ]
 
     # Build pickup pinpoint link for Google Maps (opens map at exact pin)
-    pickup_pin_link  = (
-        f"https://www.google.com/maps/search/?api=1"
-        f"&query={ride['pickup_lat']},{ride['pickup_lon']}"
-    )
-    dropoff_pin_link = (
-        f"https://www.google.com/maps/search/?api=1"
-        f"&query={ride['dropoff_lat']},{ride['dropoff_lon']}"
-    )
 
     nav_kb_rows = [
         [
@@ -113,10 +105,6 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     f"&travelmode=driving"
                 ),
             )
-        ],
-        [
-            InlineKeyboardButton("📌 View Pickup Pin",  url=pickup_pin_link),
-            InlineKeyboardButton("📌 View Drop-off Pin", url=dropoff_pin_link),
         ],
     ]
     if rider_wa_btn:
@@ -191,18 +179,22 @@ async def start_trip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data["active_trip"] = ride_id
 
+    pickup_name  = ride["pickup_name"]  or "Pickup"
+    dropoff_name = ride["dropoff_name"] or "Drop-off"
+
+    # ── IMPORTANT: use reply_text NOT edit_message_text ──────────────────────
+    # edit_message_text would destroy the navigation buttons above.
+    # reply_text sends a NEW message — navigation buttons stay visible.
     end_trip_kb = ReplyKeyboardMarkup(
         [[KeyboardButton("🟩 End Trip")]],
         resize_keyboard=True,
     )
-    await query.edit_message_text(
-        f"🟢 Trip #{ride_id} has started!\n\n"
-        f"📍 Pickup:   {ride['pickup_name'] or 'Pickup'}\n"
-        f"🏁 Drop-off: {ride['dropoff_name'] or 'Drop-off'}\n\n"
-        f"Tap END TRIP when you complete the ride."
-    )
     await query.message.reply_text(
-        "🟩 Trip is active. Tap End Trip when done.",
+        f"🟢 Trip #{ride_id} has started!\n\n"
+        f"📍 Pickup:   {pickup_name}\n"
+        f"🏁 Drop-off: {dropoff_name}\n\n"
+        f"⬆️ Navigation buttons are still above ↑\n"
+        f"Tap End Trip when you complete the ride.",
         reply_markup=end_trip_kb,
     )
 
