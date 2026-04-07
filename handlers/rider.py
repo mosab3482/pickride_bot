@@ -427,17 +427,22 @@ async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
 
     notified = 0
+    pickup_name  = ud.get("pickup_name", "N/A")
+    dropoff_name = ud.get("dropoff_name", "N/A")
+
     for drv in nearby_drivers:
         if drv["user_id"] == user.id:
             continue
         try:
             await bot.send_message(
                 drv["user_id"],
-                "🔔 New Trip Request!\n\n"
-                "Rider is " + str(round(drv["dist_km"], 2)) + " km away\n"
-                "✏ Trip distance: " + str(ud["est_distance"]) + " km\n"
-                "💰 Est. fare: ~LKR " + str(ud["est_fare"]) + "\n"
-                "Ride #" + str(ride_id),
+                "🔔 New Ride Request!\n\n"
+                "📍 Pickup:   " + pickup_name + "\n"
+                "🏁 Drop-off: " + dropoff_name + "\n"
+                "✏ Distance: " + str(ud["est_distance"]) + " km\n"
+                "💰 Est. Fare: LKR " + str(ud["est_fare"]) + "\n\n"
+                "🧭 Rider is " + str(round(drv["dist_km"], 2)) + " km from you\n\n"
+                "Tap Accept to take this ride:",
                 reply_markup=accept_keyboard,
             )
             notified += 1
