@@ -179,12 +179,39 @@ async def start_trip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data["active_trip"] = ride_id
 
+    pickup_lat   = ride["pickup_lat"]
+    pickup_lon   = ride["pickup_lon"]
+    dropoff_lat  = ride["dropoff_lat"]
+    dropoff_lon  = ride["dropoff_lon"]
     pickup_name  = ride["pickup_name"]  or "Pickup"
     dropoff_name = ride["dropoff_name"] or "Drop-off"
 
-    # ── IMPORTANT: use reply_text NOT edit_message_text ──────────────────────
-    # edit_message_text would destroy the navigation buttons above.
-    # reply_text sends a NEW message — navigation buttons stay visible.
+    # Driver current location (for navigate-to-pickup link)
+    drv_lat = lat or pickup_lat
+    drv_lon = lon or pickup_lon
+
+    # Fresh navigation buttons — independent, included in this message
+    nav_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🗺 Navigate to PICKUP",
+            url=(
+                f"https://www.google.com/maps/dir/?api=1"
+                f"&origin={drv_lat},{drv_lon}"
+                f"&destination={pickup_lat},{pickup_lon}"
+                f"&travelmode=driving"
+            ),
+        )],
+        [InlineKeyboardButton(
+            "🏁 Navigate to DROP-OFF",
+            url=(
+                f"https://www.google.com/maps/dir/?api=1"
+                f"&origin={pickup_lat},{pickup_lon}"
+                f"&destination={dropoff_lat},{dropoff_lon}"
+                f"&travelmode=driving"
+            ),
+        )],
+    ])
+
     end_trip_kb = ReplyKeyboardMarkup(
         [[KeyboardButton("🟩 End Trip")]],
         resize_keyboard=True,
@@ -193,8 +220,11 @@ async def start_trip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🟢 Trip #{ride_id} has started!\n\n"
         f"📍 Pickup:   {pickup_name}\n"
         f"🏁 Drop-off: {dropoff_name}\n\n"
-        f"⬆️ Navigation buttons are still above ↑\n"
-        f"Tap End Trip when you complete the ride.",
+        f"Use the navigation buttons below 👇",
+        reply_markup=nav_kb,
+    )
+    await query.message.reply_text(
+        "Tap End Trip when you complete the ride.",
         reply_markup=end_trip_kb,
     )
 
