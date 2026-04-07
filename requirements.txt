@@ -1,0 +1,5 @@
+python-telegram-bot==21.6
+asyncpg==0.30.0
+python-dotenv==1.0.1
+aiohttp==3.9.5
+geopy==2.4.1
