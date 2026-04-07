@@ -197,7 +197,7 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^🔕 Mute$"),   drv_mute))
     app.add_handler(MessageHandler(filters.Regex("^🔔 Unmute"),  drv_unmute))
     app.add_handler(MessageHandler(filters.Regex("^🔧 Settings$"), drv_settings))
-    app.add_handler(MessageHandler(filters.Regex("^🟩 End Trip$"), handle_end_trip))
+    app.add_handler(MessageHandler(filters.Regex("^🔴 End Trip$"), handle_end_trip))
 
     # ── Location messages ────────────────────────
     app.add_handler(MessageHandler(

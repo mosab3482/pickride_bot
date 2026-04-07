@@ -213,7 +213,7 @@ async def start_trip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     ])
 
     end_trip_kb = ReplyKeyboardMarkup(
-        [[KeyboardButton("🟩 End Trip")]],
+        [[KeyboardButton("🔴 End Trip")]],
         resize_keyboard=True,
     )
     await query.message.reply_text(
@@ -265,7 +265,7 @@ async def handle_start_trip_location(update: Update, context: ContextTypes.DEFAU
     context.user_data.pop("starting_ride", None)
     context.user_data["active_trip"] = ride_id
 
-    end_trip_kb = ReplyKeyboardMarkup([[KeyboardButton("🟩 End Trip")]], resize_keyboard=True)
+    end_trip_kb = ReplyKeyboardMarkup([[KeyboardButton("🔴 End Trip")]], resize_keyboard=True)
     await update.message.reply_text(
         f"🟢 Trip #{ride_id} started!\n\nTap END TRIP when you complete the ride.",
         reply_markup=end_trip_kb,
