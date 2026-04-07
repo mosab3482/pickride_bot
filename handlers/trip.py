@@ -163,49 +163,69 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # ─────────────────────────────────────────────
-#  Start Trip
+#  Start Trip — Immediate (no location required)
 # ─────────────────────────────────────────────
 async def start_trip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    ride_id = int(query.data.split("_")[1])
-    ride = await db.get_ride(ride_id)
+    driver_id = update.effective_user.id
+    ride_id   = int(query.data.split("_")[1])
+    ride      = await db.get_ride(ride_id)
 
     if not ride or ride["status"] != "accepted":
         await query.edit_message_text("⚠️ Cannot start this trip.")
         return
 
+    # Use driver's last known check-in location (from DB)
+    driver = await db.get_driver(driver_id)
+    lat = driver["current_lat"] if driver and driver["current_lat"] else None
+    lon = driver["current_lon"] if driver and driver["current_lon"] else None
+
+    # Start the ride in DB
+    await db.start_ride(ride_id)
+
+    # Record starting location point if available
+    if lat and lon:
+        await db.add_location_point(ride_id, driver_id, lat, lon)
+
+    context.user_data["active_trip"] = ride_id
+
+    end_trip_kb = ReplyKeyboardMarkup(
+        [[KeyboardButton("🟩 End Trip")]],
+        resize_keyboard=True,
+    )
     await query.edit_message_text(
-        f"📍 Please share your current GPS location to START the trip.",
+        f"🟢 Trip #{ride_id} has started!\n\n"
+        f"📍 Pickup:   {ride['pickup_name'] or 'Pickup'}\n"
+        f"🏁 Drop-off: {ride['dropoff_name'] or 'Drop-off'}\n\n"
+        f"Tap END TRIP when you complete the ride."
     )
     await query.message.reply_text(
-        "Share your live location to begin the trip:",
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("📍 Share Location to Start", request_location=True)]],
-            resize_keyboard=True,
-        ),
+        "🟩 Trip is active. Tap End Trip when done.",
+        reply_markup=end_trip_kb,
     )
-    context.user_data["starting_ride"] = ride_id
+
+    # Notify rider
+    await context.bot.send_message(
+        ride["rider_id"],
+        f"🟢 Your trip #{ride_id} has started!\n\n"
+        f"The driver is on the way to your drop-off location."
+    )
 
 
 async def share_location_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Legacy handler — kept for compatibility but redirects to start_trip_callback."""
     query = update.callback_query
     await query.answer()
     ride_id = int(query.data.split("_")[1])
+    # Simulate start trip
     context.user_data["starting_ride"] = ride_id
-
-    await query.message.reply_text(
-        "📍 Please share your location to start the trip:",
-        reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("📍 Share Location to Start", request_location=True)]],
-            resize_keyboard=True,
-        ),
-    )
+    await query.edit_message_text("📍 Please tap 🟢 Start Trip to begin the ride.")
 
 
 async def handle_start_trip_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Location message that kicks off trip start."""
+    """Kept for backwards compatibility — no longer used in normal flow."""
     ride_id = context.user_data.get("starting_ride")
     if not ride_id:
         return
@@ -220,28 +240,15 @@ async def handle_start_trip_location(update: Update, context: ContextTypes.DEFAU
 
     await db.start_ride(ride_id)
     await db.add_location_point(ride_id, update.effective_user.id, loc.latitude, loc.longitude)
-
     context.user_data.pop("starting_ride", None)
-
-    end_trip_kb = ReplyKeyboardMarkup(
-        [[KeyboardButton("🟩 End Trip")]],
-        resize_keyboard=True,
-    )
-    await update.message.reply_text(
-        f"🟢 Trip #{ride_id} started!\n\n"
-        f"📍 Live GPS fare tracking is active.\n"
-        f"Share your live location for accurate distance & fare.\n\n"
-        f"Tap 📎 → Location → Share My Live Location for 1 hour.\n\n"
-        f"When you arrive, tap END TRIP to complete.",
-        reply_markup=end_trip_kb,
-    )
     context.user_data["active_trip"] = ride_id
 
-    # Notify rider
-    await context.bot.send_message(
-        ride["rider_id"],
-        f"🟢 Your trip #{ride_id} has started.",
+    end_trip_kb = ReplyKeyboardMarkup([[KeyboardButton("🟩 End Trip")]], resize_keyboard=True)
+    await update.message.reply_text(
+        f"🟢 Trip #{ride_id} started!\n\nTap END TRIP when you complete the ride.",
+        reply_markup=end_trip_kb,
     )
+    await context.bot.send_message(ride["rider_id"], f"🟢 Trip #{ride_id} has started!")
 
 
 # ─────────────────────────────────────────────
