@@ -36,6 +36,13 @@ from handlers.trip import (
 )
 from handlers.admin import (
     admin_entry, admin_callback, admin_text_input,
+    cmd_admin_help, cmd_status, cmd_rates,
+    cmd_setbase, cmd_setrate, cmd_basekm, cmd_setradius,
+    cmd_blockcat, cmd_unblockcat,
+    cmd_block_user, cmd_unblock_user,
+    cmd_drivers, cmd_riders, cmd_users,
+    cmd_trips, cmd_revenue,
+    cmd_groupid, cmd_whoami, cmd_session, cmd_restart,
 )
 
 logging.basicConfig(
@@ -84,21 +91,41 @@ async def post_init(app: Application):
     for attempt in range(1, 4):
         try:
             await app.bot.set_my_commands([
-                BotCommand("start",      "Return to main menu"),
-                BotCommand("regis",      "Reset driver registration"),
-                BotCommand("cancel",     "Cancel current action"),
-                BotCommand("cancelride", "Cancel active ride"),
+                BotCommand("start",       "Return to main menu"),
+                BotCommand("regis",       "Reset driver registration"),
+                BotCommand("cancel",      "Cancel current action"),
+                BotCommand("cancelride",  "Cancel active ride"),
+                BotCommand("help",        "Show all available commands"),
+                BotCommand("status",      "Show bot status"),
+                BotCommand("rates",       "View all rates per category"),
+                BotCommand("setbase",     "Set base fare (e.g. /setbase car 300)"),
+                BotCommand("setrate",     "Set per-km rate (e.g. /setrate car 100)"),
+                BotCommand("basekm",      "Set base km (e.g. /basekm 3)"),
+                BotCommand("setradius",   "Set driver radius (e.g. /setradius 10)"),
+                BotCommand("blockcat",    "Disable category (e.g. /blockcat bike)"),
+                BotCommand("unblockcat",  "Enable category (e.g. /unblockcat bike)"),
+                BotCommand("block",       "Block user (e.g. /block 123456)"),
+                BotCommand("unblock",     "Unblock user (e.g. /unblock 123456)"),
+                BotCommand("drivers",     "List registered drivers"),
+                BotCommand("riders",      "List registered riders"),
+                BotCommand("users",       "All registered users"),
+                BotCommand("trips",       "Trip data & statistics"),
+                BotCommand("revenue",     "Revenue summary"),
+                BotCommand("groupid",     "Get group ID for logs"),
+                BotCommand("whoami",      "Show your sender ID"),
+                BotCommand("session",     "Session settings"),
+                BotCommand("restart",     "Restart the bot"),
             ])
             break
         except NetworkError as e:
             logger.warning(f"set_my_commands attempt {attempt}/3 failed: {e}")
             if attempt < 3:
                 await asyncio.sleep(2)
-    logger.info("PickRide Bot is ready.")
+    logger.info("TeleCabs Bot is ready.")
 
 
 async def post_shutdown(app: Application):
-    logger.info("Shutting down PickRide Bot...")
+    logger.info("Shutting down TeleCabs Bot...")
     await db.close_pool()
     logger.info("Database pool closed.")
 
@@ -162,10 +189,32 @@ def main():
     app.add_error_handler(error_handler)
 
     # ── Commands ─────────────────────────────────
-    app.add_handler(CommandHandler("start",      cmd_start))
-    app.add_handler(CommandHandler("cancel",     cmd_cancel))
-    app.add_handler(CommandHandler("cancelride", cmd_cancel_ride))
+    app.add_handler(CommandHandler("start",       cmd_start))
+    app.add_handler(CommandHandler("cancel",      cmd_cancel))
+    app.add_handler(CommandHandler("cancelride",  cmd_cancel_ride))
     # NOTE: /regis is handled inside driver_conv_handler() as an entry_point
+
+    # ── Admin Slash Commands ──────────────────────
+    app.add_handler(CommandHandler("help",        cmd_admin_help))
+    app.add_handler(CommandHandler("status",      cmd_status))
+    app.add_handler(CommandHandler("rates",       cmd_rates))
+    app.add_handler(CommandHandler("setbase",     cmd_setbase))
+    app.add_handler(CommandHandler("setrate",     cmd_setrate))
+    app.add_handler(CommandHandler("basekm",      cmd_basekm))
+    app.add_handler(CommandHandler("setradius",   cmd_setradius))
+    app.add_handler(CommandHandler("blockcat",    cmd_blockcat))
+    app.add_handler(CommandHandler("unblockcat",  cmd_unblockcat))
+    app.add_handler(CommandHandler("block",       cmd_block_user))
+    app.add_handler(CommandHandler("unblock",     cmd_unblock_user))
+    app.add_handler(CommandHandler("drivers",     cmd_drivers))
+    app.add_handler(CommandHandler("riders",      cmd_riders))
+    app.add_handler(CommandHandler("users",       cmd_users))
+    app.add_handler(CommandHandler("trips",       cmd_trips))
+    app.add_handler(CommandHandler("revenue",     cmd_revenue))
+    app.add_handler(CommandHandler("groupid",     cmd_groupid))
+    app.add_handler(CommandHandler("whoami",      cmd_whoami))
+    app.add_handler(CommandHandler("session",     cmd_session))
+    app.add_handler(CommandHandler("restart",     cmd_restart))
 
     # ── Conversation handlers ─────────────────────
     # Group 0: ConversationHandlers - highest priority for active conversations
@@ -211,7 +260,7 @@ def main():
         _trip_end_text_router,
     ))
 
-    logger.info("Starting PickRide Bot...")
+    logger.info("Starting TeleCabs Bot...")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 

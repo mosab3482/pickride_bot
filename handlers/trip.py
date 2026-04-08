@@ -95,17 +95,6 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 ),
             )
         ],
-        [
-            InlineKeyboardButton(
-                "🏁 Navigate to DROP-OFF",
-                url=(
-                    f"https://www.google.com/maps/dir/?api=1"
-                    f"&origin={ride['pickup_lat']},{ride['pickup_lon']}"
-                    f"&destination={ride['dropoff_lat']},{ride['dropoff_lon']}"
-                    f"&travelmode=driving"
-                ),
-            )
-        ],
     ]
     if rider_wa_btn:
         nav_kb_rows.append(rider_wa_btn)
@@ -190,17 +179,8 @@ async def start_trip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     drv_lat = lat or pickup_lat
     drv_lon = lon or pickup_lon
 
-    # Fresh navigation buttons — independent, included in this message
+    # After trip starts → show only DROP-OFF navigation
     nav_kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "🗺 Navigate to PICKUP",
-            url=(
-                f"https://www.google.com/maps/dir/?api=1"
-                f"&origin={drv_lat},{drv_lon}"
-                f"&destination={pickup_lat},{pickup_lon}"
-                f"&travelmode=driving"
-            ),
-        )],
         [InlineKeyboardButton(
             "🏁 Navigate to DROP-OFF",
             url=(
@@ -367,7 +347,11 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
         return True
 
     distance = context.user_data.get("final_distance", 0)
-    fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(distance, waiting_min)
+    ride     = await db.get_ride(ride_id)
+    vehicle_type = ride["vehicle_type"] if ride else "car"
+    fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(
+        distance, waiting_min, vehicle_type=vehicle_type
+    )
 
     await db.complete_ride(ride_id, distance, fare, waiting_min)
 
@@ -401,14 +385,14 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
         waiting_line = f"⏱ Waiting: {waiting_min} min × LKR {waiting_rate}/min = LKR {waiting_charge}\n"
 
     completion_msg = (
-        f"✅ PickRide — Trip #{ride_id} Completed!\n\n"
+        f"✅ TeleCabs — Trip #{ride_id} Completed!\n\n"
         f"👤 Rider: {rider_tag}\n"
         f"🚘 Driver: {driver_tag}\n"
         f"📏 Distance: {distance} km\n"
         f"💵 Rate: First {base_km} km = LKR {base_fare}, then LKR {per_km}/km\n"
         f"{waiting_line}"
         f"💰 Total Fare: LKR {fare}\n\n"
-        f"Thank you for using PickRide!"
+        f"Thank you for using TeleCabs!"
     )
 
     # Send completion to driver

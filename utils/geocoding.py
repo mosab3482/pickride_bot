@@ -17,10 +17,10 @@ PHOTON_SEARCH     = "https://photon.komoot.io/api/"
 NOMINATIM_SEARCH  = "https://nominatim.openstreetmap.org/search"
 
 NOMINATIM_HEADERS = {
-    "User-Agent":    "PickRideBot/2.0 contact:pickride.app@gmail.com",
+    "User-Agent":    "TeleCabsBot/2.0 contact:telecabs.app@gmail.com",
     "Accept-Language": "en",
 }
-PHOTON_HEADERS = {"User-Agent": "PickRideBot/2.0"}
+PHOTON_HEADERS = {"User-Agent": "TeleCabsBot/2.0"}
 
 
 def _in_sri_lanka(lat: float, lon: float) -> bool:

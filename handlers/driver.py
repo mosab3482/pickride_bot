@@ -86,8 +86,8 @@ async def _start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     phone_btn = KeyboardButton("📱 Share My Number", request_contact=True)
     await update.message.reply_text(
         "🚗 Driver Registration\n\n"
-        "We need a few details to register you as a PickRide driver.\n\n"
-        "Step 1/5 — Please share your phone number:",
+        "We need a few details to register you as a TeleCabs driver.\n\n"
+        "Step 1/5 — Share your phone number:",
         reply_markup=ReplyKeyboardMarkup(
             [[phone_btn]], resize_keyboard=True, one_time_keyboard=True
         ),
@@ -155,7 +155,9 @@ async def drv_receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["drv_name"] = name
 
     await update.message.reply_text(
-        f"✅ Name: {name}\n\nStep 4/5 — Enter your vehicle plate number:\n(Example: CAB-1234)",
+        f"✅ Name: {name}\n\n"
+        f"Step 4/5 — Enter vehicle number & model\n"
+        f"(e.g. CAB-1234, Prius)",
         reply_markup=ReplyKeyboardRemove(),
     )
     return DRV_PLATE
@@ -165,12 +167,20 @@ async def drv_receive_plate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plate = update.message.text.strip().upper()
     context.user_data["drv_plate"] = plate
 
+    # Extract plate and model from input like "CAZ 6560 WagonR"
+    parts = plate.split()
+    if len(parts) >= 3:
+        plate_num = " ".join(parts[:2])
+        model     = " ".join(parts[2:])
+        plate_display = f"{plate_num} • {model}"
+    else:
+        plate_display = plate
+
     await update.message.reply_text(
-        f"✅ Plate: {plate}\n\n"
-        "Step 5/5 — Share your current location.\n\n"
-        "📌 Note: Telegram has no live GPS tracking, so you need to "
-        "check-in every time you change location. This helps passengers find you. "
-        "Tap Next to continue.",
+        f"✅ {plate_display}\n\n"
+        "Step 5/5 — Share your location 📍\n"
+        "Check-in when you move\n\n"
+        "Tap Next ➡️",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("▶️ Next")]], resize_keyboard=True
         ),
@@ -209,8 +219,9 @@ async def drv_receive_location(update: Update, context: ContextTypes.DEFAULT_TYP
 
     await update.message.reply_text(
         "✅ Registration complete!\n\n"
-        "You'll be notified when passengers nearby request a ride. "
-        "Keep this app running and check-in when your location changes. Tap Next.",
+        "You'll get ride requests nearby\n"
+        "Keep app active & update location 📍\n\n"
+        "Tap Next ➡️",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("▶️ Next")]], resize_keyboard=True
         ),
@@ -239,8 +250,8 @@ async def drv_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         driver = await db.get_driver(user.id)
         is_muted = driver["is_muted"] if driver else False
         await update.message.reply_text(
-            "👌 Location updated! If incorrect, check-in again and use the "
-            "📎 attachment → Location option instead."
+            "👌 Location updated\n\n"
+            "If wrong, check-in again or send via 📎 Location"
         )
         await update.message.reply_text(
             "Driver Dashboard 👇",

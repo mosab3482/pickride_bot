@@ -92,9 +92,9 @@ async def rider_vehicle_selected(update: Update, context: ContextTypes.DEFAULT_T
 
     await query.edit_message_text(label + " selected! ✅")
     await query.message.reply_text(
-        "📍 Where is your pickup location?\n\n"
-        "• 📌 Tap the button to share your GPS location\n"
-        "• ✏️ Or type the pickup place name (e.g. Colombo Fort)",
+        "📍 Share your pickup location\n\n"
+        "• Tap to send GPS 📌\n"
+        "• Or type location (e.g. Colombo Fort)",
         reply_markup=ReplyKeyboardMarkup(
             [[KeyboardButton("📍 Send My Location", request_location=True)]],
             resize_keyboard=True,
@@ -116,10 +116,10 @@ async def rider_pickup_received(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["pickup_name"] = pickup_name
 
     await update.message.reply_text(
-        f"✅ Pickup set: {pickup_name}\n\n"
-        "🏁 Where do you want to go?\n\n"
-        "Type the place name in English (e.g. Kandy, Galle Fort)\n"
-        "Or tap 📎 → Location to pin on map.",
+        f"✅ Pickup: {pickup_name}\n\n"
+        "🏁 Enter your drop location\n"
+        "• Type place (e.g. Kandy)\n"
+        "• Or send location 📎",
         reply_markup=ReplyKeyboardRemove(),
     )
     return RIDER_DEST_INPUT
@@ -185,9 +185,9 @@ async def rider_pickup_selected(update: Update, context: ContextTypes.DEFAULT_TY
 
     await query.edit_message_text("✅ Pickup set: " + selected["name"])
     await query.message.reply_text(
-        "🏁 Where do you want to go?\n\n"
-        "Type the destination name in English (e.g. Kandy, Galle Fort)\n"
-        "Or tap 📎 → Location to pin on map.",
+        "🏁 Enter your drop location\n"
+        "• Type place (e.g. Kandy)\n"
+        "• Or send location 📎",
         reply_markup=ReplyKeyboardRemove(),
     )
     return RIDER_DEST_INPUT
@@ -290,18 +290,24 @@ async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
     dropoff_name = ud.get("dropoff_name", "Drop-off")
     vehicle_label = ud.get("rider_vehicle_label", "Car")
 
-    # Try Google Maps first, fallback to Haversine×1.3
+    # Read configured distance method from DB
     cached = await db.get_cached_route(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon)
     if cached:
         dist = cached["distance_km"]
-        fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(dist)
+        fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(
+            dist, vehicle_type=ud.get("rider_vehicle", "car")
+        )
         dist_method = "cached"
     else:
+        method = (await db.get_setting("distance_method") or "osrm").lower()
         dist, dist_method = await get_road_distance(
             pickup_lat, pickup_lon, dropoff_lat, dropoff_lon,
             api_key=GOOGLE_MAPS_API_KEY,
+            method=method,
         )
-        fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(dist)
+        fare, base_fare, per_km, base_km, waiting_rate = await calculate_fare(
+            dist, vehicle_type=ud.get("rider_vehicle", "car")
+        )
         await db.set_cached_route(
             pickup_lat, pickup_lon, dropoff_lat, dropoff_lon, dist, fare
         )
@@ -310,14 +316,16 @@ async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
     ud["est_fare"]     = fare
 
     # Show distance source indicator
-    dist_note = ""
-    if dist_method == "google":
-        dist_note = " (road)"
-    elif dist_method == "haversine":
-        dist_note = " (est.)"
+    dist_labels = {
+        "google":    " 🌐",
+        "osrm":      " 🗺️",
+        "haversine": " 📐 (est.)",
+        "cached":    " 💾",
+    }
+    dist_note = dist_labels.get(dist_method, "")
 
     text = (
-        "🚕 PickRide — Fare Estimate\n\n"
+        "🚕 TeleCabs — Fare Estimate\n\n"
         "📍 Pickup:   " + pickup_name + "\n"
         "🏁 Drop-off: " + dropoff_name + "\n"
         "🚗 Vehicle:  " + vehicle_label + "\n\n"

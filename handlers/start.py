@@ -29,7 +29,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await db.upsert_user(user.id, user.username or "", user.first_name or "")
 
     await update.message.reply_text(
-        "👋 *Welcome to PickRide 🚕*\n\nFast and simple taxi service.",
+        "👋 *Welcome to TeleCabs 🚕*\n\nFast and simple taxi service.",
         parse_mode="Markdown",
         reply_markup=await main_keyboard(user.id),
     )
@@ -37,7 +37,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "PickRide — Help\n\n"
+        "TeleCabs — Help\n\n"
         "🚕 *Request Ride* — Book a taxi\n"
         "🚗 *I'm a Driver* — Register or go online as driver\n"
         "📍 *Update My Location* — Update your GPS position\n"

@@ -144,11 +144,12 @@ async def init_db():
 
         # Insert default settings if not present
         defaults = {
-            "base_fare":     str(DEFAULT_BASE_FARE),
-            "per_km_rate":   str(DEFAULT_PER_KM_RATE),
-            "base_km":       str(DEFAULT_BASE_KM),
-            "waiting_rate":  str(DEFAULT_WAITING_RATE),
-            "driver_radius": str(DEFAULT_DRIVER_RADIUS),
+            "base_fare":        str(DEFAULT_BASE_FARE),
+            "per_km_rate":      str(DEFAULT_PER_KM_RATE),
+            "base_km":          str(DEFAULT_BASE_KM),
+            "waiting_rate":     str(DEFAULT_WAITING_RATE),
+            "driver_radius":    str(DEFAULT_DRIVER_RADIUS),
+            "distance_method":  "osrm",   # google | osrm | haversine
         }
         for key, val in defaults.items():
             await conn.execute("""
