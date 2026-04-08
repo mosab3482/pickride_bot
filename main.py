@@ -2,7 +2,7 @@ import logging
 import asyncio
 import traceback
 
-from telegram import Update, BotCommand
+from telegram import Update, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from telegram.error import NetworkError, TelegramError
 from telegram.ext import (
     Application, ApplicationBuilder,
@@ -88,39 +88,72 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def post_init(app: Application):
     await db.init_db()
     await db.cleanup_expired_cache()
+
+    # ── Commands visible to ALL users ─────────────────
+    user_commands = [
+        BotCommand("start",      "Return to main menu"),
+        BotCommand("regis",      "Reset driver registration"),
+        BotCommand("cancel",     "Cancel current action"),
+        BotCommand("cancelride", "Cancel active ride"),
+    ]
+
+    # ── Commands visible ONLY to admins ───────────────
+    admin_commands = user_commands + [
+        BotCommand("help",       "Show all admin commands"),
+        BotCommand("status",     "Bot status"),
+        BotCommand("rates",      "View all rates"),
+        BotCommand("setbase",    "Set base fare (e.g. /setbase car 300)"),
+        BotCommand("setrate",    "Set per-km rate (e.g. /setrate car 100)"),
+        BotCommand("basekm",     "Set base km (e.g. /basekm 3)"),
+        BotCommand("setradius",  "Set driver radius (e.g. /setradius 10)"),
+        BotCommand("blockcat",   "Disable category (e.g. /blockcat bike)"),
+        BotCommand("unblockcat", "Enable category (e.g. /unblockcat bike)"),
+        BotCommand("block",      "Block user (e.g. /block 123456)"),
+        BotCommand("unblock",    "Unblock user (e.g. /unblock 123456)"),
+        BotCommand("drivers",    "List registered drivers"),
+        BotCommand("riders",     "List registered riders"),
+        BotCommand("users",      "All registered users"),
+        BotCommand("trips",      "Trip statistics"),
+        BotCommand("revenue",    "Revenue summary"),
+        BotCommand("groupid",    "Get chat/group ID"),
+        BotCommand("whoami",     "Show your sender info"),
+        BotCommand("session",    "Current session settings"),
+        BotCommand("restart",    "Restart bot session"),
+    ]
+
     for attempt in range(1, 4):
         try:
-            await app.bot.set_my_commands([
-                BotCommand("start",       "Return to main menu"),
-                BotCommand("regis",       "Reset driver registration"),
-                BotCommand("cancel",      "Cancel current action"),
-                BotCommand("cancelride",  "Cancel active ride"),
-                BotCommand("help",        "Show all available commands"),
-                BotCommand("status",      "Show bot status"),
-                BotCommand("rates",       "View all rates per category"),
-                BotCommand("setbase",     "Set base fare (e.g. /setbase car 300)"),
-                BotCommand("setrate",     "Set per-km rate (e.g. /setrate car 100)"),
-                BotCommand("basekm",      "Set base km (e.g. /basekm 3)"),
-                BotCommand("setradius",   "Set driver radius (e.g. /setradius 10)"),
-                BotCommand("blockcat",    "Disable category (e.g. /blockcat bike)"),
-                BotCommand("unblockcat",  "Enable category (e.g. /unblockcat bike)"),
-                BotCommand("block",       "Block user (e.g. /block 123456)"),
-                BotCommand("unblock",     "Unblock user (e.g. /unblock 123456)"),
-                BotCommand("drivers",     "List registered drivers"),
-                BotCommand("riders",      "List registered riders"),
-                BotCommand("users",       "All registered users"),
-                BotCommand("trips",       "Trip data & statistics"),
-                BotCommand("revenue",     "Revenue summary"),
-                BotCommand("groupid",     "Get group ID for logs"),
-                BotCommand("whoami",      "Show your sender ID"),
-                BotCommand("session",     "Session settings"),
-                BotCommand("restart",     "Restart the bot"),
-            ])
+            # Set basic commands for everyone
+            await app.bot.set_my_commands(
+                user_commands,
+                scope=BotCommandScopeDefault(),
+            )
+
+            # Collect all admin IDs (env + DB)
+            from config import ADMIN_IDS
+            db_admins = await db.get_all_admins()
+            all_admin_ids = set(ADMIN_IDS) | {a["user_id"] for a in db_admins}
+
+            # Set full admin commands per admin (private chat scope)
+            for admin_id in all_admin_ids:
+                try:
+                    await app.bot.set_my_commands(
+                        admin_commands,
+                        scope=BotCommandScopeChat(chat_id=admin_id),
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not set admin commands for {admin_id}: {e}")
+
+            logger.info(
+                f"Commands set: {len(user_commands)} public, "
+                f"{len(admin_commands)} admin (for {len(all_admin_ids)} admin(s))"
+            )
             break
         except NetworkError as e:
             logger.warning(f"set_my_commands attempt {attempt}/3 failed: {e}")
             if attempt < 3:
                 await asyncio.sleep(2)
+
     logger.info("TeleCabs Bot is ready.")
 
 
