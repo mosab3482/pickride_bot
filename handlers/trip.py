@@ -5,11 +5,23 @@ from telegram import (
 from telegram.ext import ContextTypes, CallbackQueryHandler, MessageHandler, filters
 
 import database as db
+from config import TRIPS_GROUP_ID
 from handlers.start import main_keyboard
 from handlers.driver import driver_dashboard_keyboard
 from utils.distance import haversine, cumulative_distance
 from utils.fare import calculate_fare
 from utils.geocoding import reverse_geocode
+
+
+# ── Helper: send to groups silently, never raise ──────────────────────────────
+async def _notify_group(bot, chat_id, text: str, parse_mode="Markdown"):
+    """Send a message to a group/channel, silently ignoring any errors."""
+    if not chat_id:
+        return
+    try:
+        await bot.send_message(chat_id, text, parse_mode=parse_mode)
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────
@@ -125,10 +137,13 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("📞 Call/WhatsApp Driver", url=f"https://wa.me/{clean_drv_phone}")]
         )
 
+    # Fetch driver rating
+    driver_rating = await db.get_driver_rating(driver_id)
+
     await context.bot.send_message(
         ride["rider_id"],
         f"✅ Ride #{ride_id} accepted!\n\n"
-        f"🚗 Driver: {driver_name}\n"
+        f"🚗 Driver: {driver_name} {driver_rating}\n"
         f"📞 Contact: {driver_phone}\n\n"
         f"📍 Pickup:   {pickup_name}\n"
         f"🏁 Drop-off: {dropoff_name}\n"
@@ -378,6 +393,9 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
         else driver_user["first_name"] if driver_user else "Driver"
     )
 
+    # Get driver rating
+    driver_rating = await db.get_driver_rating(ride["driver_id"])
+
     # Build waiting line
     waiting_line = ""
     if waiting_min > 0:
@@ -387,7 +405,7 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
     completion_msg = (
         f"✅ TeleCabs — Trip #{ride_id} Completed!\n\n"
         f"👤 Rider: {rider_tag}\n"
-        f"🚘 Driver: {driver_tag}\n"
+        f"🚘 Driver: {driver_tag} {driver_rating}\n"
         f"📏 Distance: {distance} km\n"
         f"💵 Rate: First {base_km} km = LKR {base_fare}, then LKR {per_km}/km\n"
         f"{waiting_line}"
@@ -397,6 +415,20 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Send completion to driver
     await update.message.reply_text(completion_msg, reply_markup=await main_keyboard(user.id))
+
+    # Post invoice to TRIPS group
+    invoice_msg = (
+        f"🧾 *Trip #{ride_id} Invoice*\n\n"
+        f"👤 Rider: {rider_tag}\n"
+        f"🚘 Driver: {driver_tag} {driver_rating}\n"
+        f"📏 Distance: {distance} km\n"
+        f"💵 Rate: First {base_km} km = LKR {base_fare}, then LKR {per_km}/km\n"
+        f"{waiting_line}"
+        f"💰 *Total Fare: LKR {fare}*\n"
+        f"📍 Pickup:   {ride['pickup_name'] or 'N/A'}\n"
+        f"🏁 Drop-off: {ride['dropoff_name'] or 'N/A'}"
+    )
+    await _notify_group(context.bot, TRIPS_GROUP_ID, invoice_msg)
 
     # Send completion + rating request to rider
     rating_kb = InlineKeyboardMarkup([
@@ -418,7 +450,7 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ─────────────────────────────────────────────
-#  Rating callback
+#  Rating callback — stars selection
 # ─────────────────────────────────────────────
 async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -434,13 +466,66 @@ async def rating_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await db.save_rating(ride_id, update.effective_user.id, ride["driver_id"], stars)
-    await query.edit_message_text(f"Thank you for your {stars} ⭐️ rating!")
 
-    # Return to main menu
+    # After rating → ask for a comment
+    await query.edit_message_text(
+        f"Thank you for your {stars} ⭐️ rating!\n\n"
+        f"💬 Would you like to leave a comment about your experience?\n"
+        f"(Tell us anything — good or bad)\n\n"
+        f"Type your comment below, or tap Skip:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➡️ Skip", callback_data=f"ratecomment_{ride_id}_skip")]
+        ]),
+    )
+    # Store context for text handler
+    context.user_data["awaiting_comment"] = {"ride_id": ride_id, "stars": stars}
+
+
+async def rating_comment_skip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Rider skipped leaving a comment."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop("awaiting_comment", None)
+    await query.edit_message_text("✅ Rating submitted. Thank you!")
     await query.message.reply_text(
         "Welcome back! 🚕\n\nFast and simple taxi service.",
         reply_markup=await main_keyboard(update.effective_user.id),
     )
+
+
+async def handle_rating_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handle rider's text comment after rating. Returns True if handled."""
+    comment_data = context.user_data.get("awaiting_comment")
+    if not comment_data:
+        return False
+
+    ride_id = comment_data["ride_id"]
+    stars   = comment_data["stars"]
+    comment = update.message.text.strip()
+
+    # Save the comment
+    await db.save_rating_comment(ride_id, update.effective_user.id, comment)
+    context.user_data.pop("awaiting_comment", None)
+
+    # Notify TRIPS group about the feedback
+    rider = await db.get_user(update.effective_user.id)
+    rider_tag = (
+        f"@{rider['username']}" if rider and rider["username"]
+        else rider["first_name"] if rider else "Rider"
+    )
+    rating_group_msg = (
+        f"💬 *Rider Feedback — Trip #{ride_id}*\n\n"
+        f"👤 Rider: {rider_tag}\n"
+        f"⭐ Rating: {'⭐' * stars} ({stars}/5)\n"
+        f"📝 Comment: {comment}"
+    )
+    await _notify_group(context.bot, TRIPS_GROUP_ID, rating_group_msg)
+
+    await update.message.reply_text(
+        f"✅ Thank you for your feedback!\n\n📝 Your comment has been recorded.",
+        reply_markup=await main_keyboard(update.effective_user.id),
+    )
+    return True
 
 
 # ─────────────────────────────────────────────

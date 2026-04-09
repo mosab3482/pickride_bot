@@ -33,6 +33,8 @@ from handlers.trip import (
     handle_waiting_time,
     live_location_update,
     rating_callback,
+    rating_comment_skip_callback,
+    handle_rating_comment,
 )
 from handlers.admin import (
     admin_entry, admin_callback, admin_text_input,
@@ -42,7 +44,7 @@ from handlers.admin import (
     cmd_block_user, cmd_unblock_user,
     cmd_drivers, cmd_riders, cmd_users,
     cmd_trips, cmd_revenue,
-    cmd_groupid, cmd_whoami, cmd_session, cmd_restart,
+    cmd_groupid, cmd_whoami, cmd_session, cmd_restart, cmd_resetbot, cmd_apistatus,
 )
 
 logging.basicConfig(
@@ -89,6 +91,13 @@ async def post_init(app: Application):
     await db.init_db()
     await db.cleanup_expired_cache()
 
+    # Clear cached routes on startup if Google API key is configured —
+    # this flushes any old inaccurate OSRM distances from the cache.
+    from config import GOOGLE_MAPS_API_KEY
+    if GOOGLE_MAPS_API_KEY:
+        await db.cleanup_all_cache()
+        logger.info("Route cache cleared — Google API key detected, all routes will use Google Maps.")
+
     # ── Commands visible to ALL users ─────────────────
     user_commands = [
         BotCommand("start",      "Return to main menu"),
@@ -119,6 +128,8 @@ async def post_init(app: Application):
         BotCommand("whoami",     "Show your sender info"),
         BotCommand("session",    "Current session settings"),
         BotCommand("restart",    "Restart bot session"),
+        BotCommand("resetbot",   "Hard-reset all stuck user sessions"),
+        BotCommand("apistatus",  "Test all external APIs (distance, geocoding)"),
     ]
 
     for attempt in range(1, 4):
@@ -174,6 +185,11 @@ async def _trip_end_text_router(update: Update, context: ContextTypes.DEFAULT_TY
 
     if context.user_data.get("awaiting_waiting"):
         handled = await handle_waiting_time(update, context)
+        if handled:
+            return
+
+    if context.user_data.get("awaiting_comment"):
+        handled = await handle_rating_comment(update, context)
         if handled:
             return
 
@@ -248,6 +264,8 @@ def main():
     app.add_handler(CommandHandler("whoami",      cmd_whoami))
     app.add_handler(CommandHandler("session",     cmd_session))
     app.add_handler(CommandHandler("restart",     cmd_restart))
+    app.add_handler(CommandHandler("resetbot",    cmd_resetbot))
+    app.add_handler(CommandHandler("apistatus",   cmd_apistatus))
 
     # ── Conversation handlers ─────────────────────
     # Group 0: ConversationHandlers - highest priority for active conversations
@@ -267,6 +285,7 @@ def main():
     app.add_handler(CallbackQueryHandler(start_trip_callback,     pattern=r"^starttrip_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(share_location_callback, pattern=r"^shareloc_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(rating_callback,         pattern=r"^rate_\d+_\d+$"), group=1)
+    app.add_handler(CallbackQueryHandler(rating_comment_skip_callback, pattern=r"^ratecomment_\d+_skip$"), group=1)
     app.add_handler(CallbackQueryHandler(admin_callback,          pattern=r"^adm_"),          group=1)
 
     # ── Main menu text buttons ───────────────────

@@ -273,16 +273,21 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     elif data == "adm_distance":
-        current = (await db.get_setting("distance_method") or "osrm").lower()
-        label   = METHOD_LABELS.get(current, current)
-        desc    = METHOD_DESCRIPTIONS.get(current, "")
-        google_key = "✅ Set" if __import__('config').GOOGLE_MAPS_API_KEY else "❌ Not set"
+        from config import GOOGLE_MAPS_API_KEY as _gkey
+        current  = (await db.get_setting("distance_method") or "osrm").lower()
+        label    = METHOD_LABELS.get(current, current)
+        desc     = METHOD_DESCRIPTIONS.get(current, "")
+        google_key = "✅ Set" if _gkey else "❌ Not set"
+        # Inform admin if Google is auto-selected
+        auto_note = ""
+        if _gkey and current != "haversine":
+            auto_note = "\n⚡ *Google API key detected — Google is used automatically for best accuracy.*"
         await query.edit_message_text(
             f"🗺️ *Distance Calculation Method*\n\n"
-            f"*Active:* {label}\n"
+            f"*Saved setting:* {label}\n"
             f"📝 {desc}\n\n"
-            f"🔑 Google API Key: {google_key}\n\n"
-            f"Tap a method below to switch:",
+            f"🔑 Google API Key: {google_key}{auto_note}\n\n"
+            f"Tap a method below to change the saved setting:",
             parse_mode="Markdown",
             reply_markup=distance_keyboard(current),
         )
@@ -300,16 +305,19 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         await db.set_setting("distance_method", method)
+        # Clear route cache so next requests use the new method
+        await db.cleanup_all_cache()
         label = METHOD_LABELS.get(method, method)
         desc  = METHOD_DESCRIPTIONS.get(method, "")
         await query.edit_message_text(
             f"✅ *Distance method switched!*\n\n"
             f"*New method:* {label}\n"
             f"📝 {desc}\n\n"
-            f"All new fare estimates will use this method.",
+            f"🧹 Route cache cleared — all new fares will use this method.",
             parse_mode="Markdown",
             reply_markup=distance_keyboard(method),
         )
+
 
     elif data == "adm_users":
         await query.edit_message_text(
@@ -481,24 +489,32 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "adm_blockcat":
         context.user_data["adm_awaiting"] = "block_cat"
         await query.edit_message_text(
-            "🚫 Enter vehicle type to *disable* (car / tuk / bike / van):",
+            "🚫 Enter vehicle type to *disable*:\n"
+            "`bike` / `tuk` / `car` / `minivan` / `van` / `bus`",
             parse_mode="Markdown",
         )
 
     elif data == "adm_unblockcat":
         context.user_data["adm_awaiting"] = "unblock_cat"
         await query.edit_message_text(
-            "✅ Enter vehicle type to *enable* (car / tuk / bike / van):",
+            "✅ Enter vehicle type to *enable*:\n"
+            "`bike` / `tuk` / `car` / `minivan` / `van` / `bus`",
             parse_mode="Markdown",
         )
 
     elif data == "adm_blockuser":
         context.user_data["adm_awaiting"] = "block_user"
-        await query.edit_message_text("⛔ Enter the *User ID* to block:", parse_mode="Markdown")
+        await query.edit_message_text(
+            "⛔ Enter *User ID*, *@username*, or *name* to block:",
+            parse_mode="Markdown",
+        )
 
     elif data == "adm_unblockuser":
         context.user_data["adm_awaiting"] = "unblock_user"
-        await query.edit_message_text("✅ Enter the *User ID* to unblock:", parse_mode="Markdown")
+        await query.edit_message_text(
+            "✅ Enter *User ID*, *@username*, or *name* to unblock:",
+            parse_mode="Markdown",
+        )
 
 
 async def admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -556,34 +572,87 @@ async def admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif awaiting == "block_cat":
         vt = text.lower()
-        if vt not in ("car", "tuk", "bike", "van"):
-            await update.message.reply_text("⚠️ Invalid category. Use: car, tuk, bike, van")
+        if vt not in VEHICLE_TYPES:
+            await update.message.reply_text(
+                "⚠️ Invalid category. Valid types: bike, tuk, car, minivan, van, bus"
+            )
             return
+        emoji = VEHICLE_EMOJIS.get(vt, "🚗")
         await db.block_category(vt)
-        await update.message.reply_text(f"🚫 Category *{vt}* disabled.", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"🚫 {emoji} *{vt.title()}* has been disabled.", parse_mode="Markdown"
+        )
 
     elif awaiting == "unblock_cat":
         vt = text.lower()
+        if vt not in VEHICLE_TYPES:
+            await update.message.reply_text(
+                "⚠️ Invalid category. Valid types: bike, tuk, car, minivan, van, bus"
+            )
+            return
+        emoji = VEHICLE_EMOJIS.get(vt, "🚗")
         await db.unblock_category(vt)
-        await update.message.reply_text(f"✅ Category *{vt}* enabled.", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ {emoji} *{vt.title()}* has been enabled.", parse_mode="Markdown"
+        )
 
-    elif awaiting == "block_user":
-        try:
-            uid = int(text)
-        except ValueError:
-            await update.message.reply_text("⚠️ Enter a valid numeric User ID.")
-            return
-        await db.block_user(uid, True)
-        await update.message.reply_text(f"⛔ User `{uid}` has been blocked.", parse_mode="Markdown")
+    elif awaiting in ("block_user", "unblock_user"):
+        blocking = awaiting == "block_user"
+        uid = None
+        user_row = None
 
-    elif awaiting == "unblock_user":
+        # 1) Try numeric ID first
         try:
-            uid = int(text)
+            uid = int(text.lstrip("@"))
+            user_row = await db.get_user(uid)
         except ValueError:
-            await update.message.reply_text("⚠️ Enter a valid numeric User ID.")
+            pass
+
+        # 2) Try @username lookup
+        if uid is None:
+            user_row = await db.get_user_by_username(text)
+            if user_row:
+                uid = user_row["user_id"]
+
+        # 3) Try first-name search
+        if uid is None:
+            matches = await db.get_users_by_name(text)
+            if len(matches) == 1:
+                user_row = matches[0]
+                uid = user_row["user_id"]
+            elif len(matches) > 1:
+                lines = [
+                    f"• {m['first_name']} (@{m['username'] or '—'}) → `{m['user_id']}`"
+                    for m in matches[:10]
+                ]
+                await update.message.reply_text(
+                    f"⚠️ Found {len(matches)} users matching *{text}*. "
+                    f"Please re-enter with the exact ID:\n\n" + "\n".join(lines),
+                    parse_mode="Markdown",
+                )
+                context.user_data["adm_awaiting"] = awaiting  # keep waiting
+                return
+
+        if uid is None:
+            await update.message.reply_text(
+                f"⚠️ No user found for `{text}`. Try their numeric ID instead.",
+                parse_mode="Markdown",
+            )
             return
-        await db.block_user(uid, False)
-        await update.message.reply_text(f"✅ User `{uid}` has been unblocked.", parse_mode="Markdown")
+
+        await db.block_user(uid, blocking)
+        name = (
+            f"@{user_row['username']}" if user_row and user_row["username"]
+            else (user_row["first_name"] if user_row else str(uid))
+        )
+        if blocking:
+            await update.message.reply_text(
+                f"⛔ *{name}* (`{uid}`) has been blocked.", parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"✅ *{name}* (`{uid}`) has been unblocked.", parse_mode="Markdown"
+            )
 
     elif awaiting == "add_admin":
         try:
@@ -632,6 +701,33 @@ async def _admin_only(update: Update) -> bool:
     return False
 
 
+async def _resolve_user(query_str: str):
+    """
+    Resolve a user from a query string.
+    Accepts: numeric ID, @username, or first name (partial match).
+    Returns (user_id, user_row) or (None, None) if not found.
+    """
+    # 1) Numeric ID
+    try:
+        uid = int(query_str.lstrip("@"))
+        row = await db.get_user(uid)
+        return (uid, row)
+    except ValueError:
+        pass
+
+    # 2) @username exact match
+    row = await db.get_user_by_username(query_str)
+    if row:
+        return (row["user_id"], row)
+
+    # 3) First-name partial match — only auto-resolve if exactly one hit
+    matches = await db.get_users_by_name(query_str)
+    if len(matches) == 1:
+        return (matches[0]["user_id"], matches[0])
+
+    return (None, None)
+
+
 async def cmd_admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show all available admin commands."""
     await update.message.reply_text(
@@ -653,12 +749,12 @@ async def cmd_admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/basekm 3 — Set base free kilometers\n\n"
         "⚙️ *System*\n"
         "/setradius 10 — Set driver search radius (km)\n\n"
-        "🚫 *Categories*\n"
+        "🚫 *Categories* (bike/tuk/car/minivan/van/bus)\n"
         "/blockcat bike — Disable a vehicle category\n"
         "/unblockcat bike — Enable a vehicle category\n\n"
         "👤 *Users*\n"
-        "/block 123456 — Block a user by ID\n"
-        "/unblock 123456 — Unblock a user by ID\n\n"
+        "/block @username — Block a user (ID, @username, or name)\n"
+        "/unblock @username — Unblock a user (ID, @username, or name)\n\n"
         "🔄 *System*\n"
         "/restart — Restart the bot session\n\n"
         "💡 Use 👑 *Admin Control ⚙️* button for a full GUI panel.",
@@ -789,66 +885,107 @@ async def cmd_setradius(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_blockcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Disable a vehicle category. Usage: /blockcat bike"""
+    """Disable a vehicle category. Usage: /blockcat <type>"""
     if not await _admin_only(update):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ Usage: `/blockcat bike`\nValid: car, tuk, bike, van", parse_mode="Markdown")
+        await update.message.reply_text(
+            "⚠️ Usage: `/blockcat bike`\nValid: bike, tuk, car, minivan, van, bus",
+            parse_mode="Markdown",
+        )
         return
     vt = args[0].lower()
-    if vt not in ("car", "tuk", "bike", "van"):
-        await update.message.reply_text("⚠️ Invalid category. Use: car, tuk, bike, van")
+    if vt not in VEHICLE_TYPES:
+        await update.message.reply_text(
+            "⚠️ Invalid category. Valid: bike, tuk, car, minivan, van, bus"
+        )
         return
+    emoji = VEHICLE_EMOJIS.get(vt, "🚗")
     await db.block_category(vt)
-    await update.message.reply_text(f"🚫 Category *{vt}* has been disabled.", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🚫 {emoji} *{vt.title()}* has been disabled.", parse_mode="Markdown"
+    )
 
 
 async def cmd_unblockcat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enable a vehicle category. Usage: /unblockcat bike"""
+    """Enable a vehicle category. Usage: /unblockcat <type>"""
     if not await _admin_only(update):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ Usage: `/unblockcat bike`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "⚠️ Usage: `/unblockcat bike`\nValid: bike, tuk, car, minivan, van, bus",
+            parse_mode="Markdown",
+        )
         return
     vt = args[0].lower()
+    if vt not in VEHICLE_TYPES:
+        await update.message.reply_text(
+            "⚠️ Invalid category. Valid: bike, tuk, car, minivan, van, bus"
+        )
+        return
+    emoji = VEHICLE_EMOJIS.get(vt, "🚗")
     await db.unblock_category(vt)
-    await update.message.reply_text(f"✅ Category *{vt}* has been enabled.", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"✅ {emoji} *{vt.title()}* has been enabled.", parse_mode="Markdown"
+    )
 
 
 async def cmd_block_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Block a user. Usage: /block <user_id>"""
+    """Block a user. Usage: /block <user_id|@username|name>"""
     if not await _admin_only(update):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ Usage: `/block 123456789`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "⚠️ Usage: `/block 123456789` or `/block @username` or `/block FirstName`",
+            parse_mode="Markdown",
+        )
         return
-    try:
-        uid = int(args[0].lstrip("@"))
-    except ValueError:
-        await update.message.reply_text("⚠️ Please provide a valid numeric User ID.")
+    query_str = " ".join(args)
+    uid, user_row = await _resolve_user(query_str)
+    if uid is None:
+        await update.message.reply_text(
+            f"⚠️ No user found for `{query_str}`.", parse_mode="Markdown"
+        )
         return
     await db.block_user(uid, True)
-    await update.message.reply_text(f"⛔ User `{uid}` has been *blocked*.", parse_mode="Markdown")
+    name = (
+        f"@{user_row['username']}" if user_row and user_row["username"]
+        else (user_row["first_name"] if user_row else str(uid))
+    )
+    await update.message.reply_text(
+        f"⛔ *{name}* (`{uid}`) has been *blocked*.", parse_mode="Markdown"
+    )
 
 
 async def cmd_unblock_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Unblock a user. Usage: /unblock <user_id>"""
+    """Unblock a user. Usage: /unblock <user_id|@username|name>"""
     if not await _admin_only(update):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("⚠️ Usage: `/unblock 123456789`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "⚠️ Usage: `/unblock 123456789` or `/unblock @username` or `/unblock FirstName`",
+            parse_mode="Markdown",
+        )
         return
-    try:
-        uid = int(args[0].lstrip("@"))
-    except ValueError:
-        await update.message.reply_text("⚠️ Please provide a valid numeric User ID.")
+    query_str = " ".join(args)
+    uid, user_row = await _resolve_user(query_str)
+    if uid is None:
+        await update.message.reply_text(
+            f"⚠️ No user found for `{query_str}`.", parse_mode="Markdown"
+        )
         return
     await db.block_user(uid, False)
-    await update.message.reply_text(f"✅ User `{uid}` has been *unblocked*.", parse_mode="Markdown")
+    name = (
+        f"@{user_row['username']}" if user_row and user_row["username"]
+        else (user_row["first_name"] if user_row else str(uid))
+    )
+    await update.message.reply_text(
+        f"✅ *{name}* (`{uid}`) has been *unblocked*.", parse_mode="Markdown"
+    )
 
 
 async def cmd_drivers(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1007,3 +1144,160 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚠️ Note: To fully restart the bot process, restart the server.",
         parse_mode="Markdown",
     )
+
+
+async def cmd_resetbot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hard-reset ALL stuck user sessions. Clears every user's conversation state."""
+    if not await _admin_only(update):
+        return
+
+    user_count = len(context.application.user_data)
+    context.application.user_data.clear()
+    context.application.chat_data.clear()
+    context.application.bot_data.clear()
+
+    await update.message.reply_text(
+        f"🔄 *Full Bot Reset Complete!*\n\n"
+        f"✅ Cleared {user_count} user session(s).\n"
+        f"✅ All stuck conversations have been reset.\n\n"
+        f"All users can now use /start to return to the main menu.",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_apistatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Live-test all external APIs and report their status."""
+    if not await _admin_only(update):
+        return
+
+    from config import GOOGLE_MAPS_API_KEY
+    import aiohttp
+
+    await update.message.reply_text("🔍 Testing all APIs... please wait.")
+
+    lines = ["🔌 *API Status Check*\n"]
+
+    # Shared test coordinates — Colombo → Kandy
+    lat1, lon1 = 6.9271, 79.8612
+    lat2, lon2 = 7.2906, 80.6337
+
+    # ── 1. Google Distance Matrix ────────────────────────────────────────────
+    if GOOGLE_MAPS_API_KEY:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://maps.googleapis.com/maps/api/distancematrix/json",
+                    params={
+                        "origins":      f"{lat1},{lon1}",
+                        "destinations": f"{lat2},{lon2}",
+                        "mode":   "driving",
+                        "key":    GOOGLE_MAPS_API_KEY,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    d = await resp.json(content_type=None)
+            s = d.get("status", "?")
+            if s == "OK":
+                km = d["rows"][0]["elements"][0]["distance"]["value"] / 1000
+                lines.append(f"✅ *Google Distance Matrix* — {km:.1f} km (Colombo→Kandy)")
+            else:
+                lines.append(f"❌ *Google Distance Matrix* — {s}")
+        except Exception as e:
+            lines.append(f"❌ *Google Distance Matrix* — Error: {e}")
+
+        # ── 2. Google Geocoding ──────────────────────────────────────────────
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://maps.googleapis.com/maps/api/geocode/json",
+                    params={"latlng": f"{lat1},{lon1}", "key": GOOGLE_MAPS_API_KEY},
+                    timeout=aiohttp.ClientTimeout(total=6),
+                ) as resp:
+                    d = await resp.json(content_type=None)
+            s = d.get("status", "?")
+            if s == "OK":
+                lines.append(f"✅ *Google Geocoding API* — working")
+            else:
+                lines.append(f"❌ *Google Geocoding API* — {s}\n   ⚠️ Enable 'Geocoding API' in Google Cloud Console")
+        except Exception as e:
+            lines.append(f"❌ *Google Geocoding API* — Error: {e}")
+
+        # ── 3. Google Places ─────────────────────────────────────────────────
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                    params={"query": "Kandy Sri Lanka", "key": GOOGLE_MAPS_API_KEY},
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as resp:
+                    d = await resp.json(content_type=None)
+            s = d.get("status", "?")
+            if s == "OK":
+                lines.append(f"✅ *Google Places API* — working (best location search)")
+            else:
+                lines.append(f"❌ *Google Places API* — {s}\n   ⚠️ Enable 'Places API' in Google Cloud Console")
+        except Exception as e:
+            lines.append(f"❌ *Google Places API* — Error: {e}")
+    else:
+        lines.append("⚠️ *Google APIs* — No API key set in .env")
+
+    # ── 4. OSRM ─────────────────────────────────────────────────────────────
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"http://router.project-osrm.org/route/v1/driving/"
+                f"{lon1},{lat1};{lon2},{lat2}?overview=false",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                d = await resp.json(content_type=None)
+        if d.get("code") == "Ok":
+            km = d["routes"][0]["distance"] / 1000
+            lines.append(f"✅ *OSRM* — {km:.1f} km (Colombo→Kandy)")
+        else:
+            lines.append(f"❌ *OSRM* — {d.get('code', 'Error')}")
+    except Exception as e:
+        lines.append(f"❌ *OSRM* — Error: {e}")
+
+    # ── 5. Nominatim ────────────────────────────────────────────────────────
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://nominatim.openstreetmap.org/reverse",
+                params={"lat": lat1, "lon": lon1, "format": "json"},
+                headers={"User-Agent": "TeleCabsBot/2.0"},
+                timeout=aiohttp.ClientTimeout(total=6),
+            ) as resp:
+                d = await resp.json(content_type=None)
+        if "address" in d:
+            lines.append(f"✅ *Nominatim* — working (free reverse geocoding)")
+        else:
+            lines.append(f"❌ *Nominatim* — unexpected response")
+    except Exception as e:
+        lines.append(f"❌ *Nominatim* — Error: {e}")
+
+    # ── 6. Photon ───────────────────────────────────────────────────────────
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://photon.komoot.io/api/",
+                params={"q": "Kandy", "limit": 1, "lang": "en"},
+                timeout=aiohttp.ClientTimeout(total=6),
+            ) as resp:
+                d = await resp.json(content_type=None)
+        if d.get("features"):
+            lines.append(f"✅ *Photon* — working (free location search)")
+        else:
+            lines.append(f"⚠️ *Photon* — no results")
+    except Exception as e:
+        lines.append(f"❌ *Photon* — Error: {e}")
+
+    lines.append("\n💡 *Tips to improve accuracy:*")
+    lines.append("• Enable *Geocoding API* → better reverse geocoding")
+    lines.append("• Enable *Places API* → find hotels, roads, local names")
+    lines.append("Both are free tier eligible at console.cloud.google.com")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+    )
+

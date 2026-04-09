@@ -8,8 +8,9 @@ from telegram.ext import (
 )
 
 import database as db
-from config import GOOGLE_MAPS_API_KEY
+from config import GOOGLE_MAPS_API_KEY, TRIPS_GROUP_ID
 from handlers.start import main_keyboard, cmd_cancel
+from handlers.trip import _notify_group
 from utils.geocoding import reverse_geocode, search_location
 from utils.distance import haversine, get_road_distance
 from utils.fare import calculate_fare
@@ -112,7 +113,7 @@ async def rider_pickup_received(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["pickup_lat"] = loc.latitude
     context.user_data["pickup_lon"] = loc.longitude
 
-    pickup_name = await reverse_geocode(loc.latitude, loc.longitude)
+    pickup_name = await reverse_geocode(loc.latitude, loc.longitude, api_key=GOOGLE_MAPS_API_KEY)
     context.user_data["pickup_name"] = pickup_name
 
     await update.message.reply_text(
@@ -132,7 +133,7 @@ async def rider_pickup_text_search(update: Update, context: ContextTypes.DEFAULT
         return RIDER_PICKUP
 
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    results = await search_location(query_text)
+    results = await search_location(query_text, api_key=GOOGLE_MAPS_API_KEY)
 
     if not results:
         await update.message.reply_text(
@@ -202,7 +203,7 @@ async def rider_dest_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id, action="typing"
     )
 
-    results = await search_location(query_text)
+    results = await search_location(query_text, api_key=GOOGLE_MAPS_API_KEY)
 
     if not results:
         await update.message.reply_text(
@@ -233,7 +234,7 @@ async def rider_dest_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def rider_dest_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     loc = update.message.location
-    dropoff_name = await reverse_geocode(loc.latitude, loc.longitude)
+    dropoff_name = await reverse_geocode(loc.latitude, loc.longitude, api_key=GOOGLE_MAPS_API_KEY)
     context.user_data["dropoff_lat"] = loc.latitude
     context.user_data["dropoff_lon"] = loc.longitude
     context.user_data["dropoff_name"] = dropoff_name
@@ -300,6 +301,10 @@ async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
         dist_method = "cached"
     else:
         method = (await db.get_setting("distance_method") or "osrm").lower()
+        # Auto-upgrade: if Google key is set and method isn't forced to haversine,
+        # prefer Google for best accuracy (esp. important for Sri Lanka mountain roads)
+        if GOOGLE_MAPS_API_KEY and method != "haversine":
+            method = "google"
         dist, dist_method = await get_road_distance(
             pickup_lat, pickup_lon, dropoff_lat, dropoff_lon,
             api_key=GOOGLE_MAPS_API_KEY,
@@ -472,6 +477,20 @@ async def rider_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Waiting for acceptance...",
             reply_markup=await main_keyboard(user.id),
         )
+
+        # Notify TRIPS group about the new request
+        rider_tag = f"@{user.username}" if user.username else user.first_name
+        trip_group_msg = (
+            f"🔔 *New Trip Request #{ride_id}*\n\n"
+            f"👤 Rider: {rider_tag}\n"
+            f"🚗 Vehicle: {ud.get('rider_vehicle_label', ud['rider_vehicle']).title()}\n"
+            f"📍 Pickup:   {pickup_name}\n"
+            f"🏁 Drop-off: {dropoff_name}\n"
+            f"✏ Distance: {ud['est_distance']} km\n"
+            f"💰 Est. Fare: LKR {ud['est_fare']}\n"
+            f"📡 Sent to {notified} driver(s)"
+        )
+        await _notify_group(context.bot, TRIPS_GROUP_ID, trip_group_msg)
 
     context.user_data.clear()
     return ConversationHandler.END

@@ -8,6 +8,7 @@ from telegram.ext import (
 )
 
 import database as db
+from config import DRIVERS_GROUP_ID
 from handlers.start import main_keyboard, cmd_cancel
 
 # ── Conversation states ───────────────────────────────────────────────────────
@@ -216,6 +217,31 @@ async def drv_receive_location(update: Update, context: ContextTypes.DEFAULT_TYP
         vehicle_type=context.user_data["drv_vehicle"],
     )
     await db.update_driver_location(user.id, loc.latitude, loc.longitude)
+
+    # Notify DRIVERS group about new registration
+    async def _send_to_drivers_group():
+        if not DRIVERS_GROUP_ID:
+            return
+        try:
+            drv_user = await db.get_user(user.id)
+            username_str = f"@{drv_user['username']}" if drv_user and drv_user["username"] else user.first_name
+            phone = drv_user["phone"] if drv_user and drv_user.get("phone") else "N/A"
+            plate = context.user_data.get("drv_plate", "N/A")
+            vtype = context.user_data.get("drv_vehicle", "N/A")
+            name  = context.user_data.get("drv_name", "N/A")
+            msg = (
+                f"🚗 *New Driver Registered*\n\n"
+                f"👤 Name: {name}\n"
+                f"🔗 Username: {username_str}\n"
+                f"📞 Phone: {phone}\n"
+                f"🚘 Vehicle: {vtype.title()}\n"
+                f"🔢 Plate: {plate}\n"
+                f"🆔 ID: `{user.id}`"
+            )
+            await context.bot.send_message(DRIVERS_GROUP_ID, msg, parse_mode="Markdown")
+        except Exception:
+            pass
+    await _send_to_drivers_group()
 
     await update.message.reply_text(
         "✅ Registration complete!\n\n"

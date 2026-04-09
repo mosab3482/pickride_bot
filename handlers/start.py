@@ -2,7 +2,7 @@ from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardR
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
 
 import database as db
-from config import ADMIN_IDS
+from config import ADMIN_IDS, RIDERS_GROUP_ID
 
 # ── Conversation states ────────────────────────────────────────────────────────
 CHOOSING_ROLE = 1
@@ -24,9 +24,31 @@ async def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 
+async def _notify_new_rider(bot, user):
+    """Send new rider registration notice to RIDERS group."""
+    if not RIDERS_GROUP_ID:
+        return
+    try:
+        username_str = f"@{user.username}" if user.username else user.first_name
+        msg = (
+            f"🚶 *New Rider Registered*\n\n"
+            f"👤 Name: {user.full_name}\n"
+            f"🔗 Username: {username_str}\n"
+            f"🆔 ID: `{user.id}`"
+        )
+        await bot.send_message(RIDERS_GROUP_ID, msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    existing = await db.get_user(user.id)
     await db.upsert_user(user.id, user.username or "", user.first_name or "")
+
+    # Notify riders group only on first registration (new user)
+    if not existing:
+        await _notify_new_rider(context.bot, user)
 
     await update.message.reply_text(
         "👋 *Welcome to TeleCabs 🚕*\n\nFast and simple taxi service.",

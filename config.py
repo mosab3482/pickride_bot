@@ -28,23 +28,40 @@ DEFAULT_DRIVER_RADIUS = float(os.getenv("DEFAULT_DRIVER_RADIUS",   8))
 # Enable the "Distance Matrix API" and "Directions API" in Google Cloud Console
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
 
+# ── Notification Groups ────────────────────────────────────────────────────────
+# Telegram group/channel chat IDs for automatic notifications.
+# Leave empty to disable that group notification.
+_trips_gid   = os.getenv("TRIPS_GROUP_ID",   "")
+_riders_gid  = os.getenv("RIDERS_GROUP_ID",  "")
+_drivers_gid = os.getenv("DRIVERS_GROUP_ID", "")
+
+TRIPS_GROUP_ID   = int(_trips_gid)   if _trips_gid.lstrip("-").isdigit()   else None
+RIDERS_GROUP_ID  = int(_riders_gid)  if _riders_gid.lstrip("-").isdigit()  else None
+DRIVERS_GROUP_ID = int(_drivers_gid) if _drivers_gid.lstrip("-").isdigit() else None
+
 VEHICLE_TYPES = {
-    "🚗 Car": "car",
-    "🛺 Tuk": "tuk",
-    "🏍️ Bike": "bike",
-    "🚐 Van": "van",
+    "🏍️ Bike":     "bike",
+    "🛺 Tuk":      "tuk",
+    "🚗 Car":      "car",
+    "🚙 Mini Van": "minivan",
+    "🚐 Van":      "van",
+    "🚌 Bus":      "bus",
 }
 
 VEHICLE_SEATS = {
-    "car":  "3-4 Seats",
-    "tuk":  "2-3 Seats",
-    "bike": "1 Seat",
-    "van":  "5+ Seats",
+    "bike":    "1 Seat",
+    "tuk":     "2-3 Seats",
+    "car":     "3-4 Seats",
+    "minivan": "5 Seats",
+    "van":     "10 Seats",
+    "bus":     "25+ Seats",
 }
 
 VEHICLE_EMOJIS = {
-    "car":  "🚗",
-    "tuk":  "🛺",
-    "bike": "🏍️",
-    "van":  "🚐",
+    "bike":    "🏍️",
+    "tuk":     "🛺",
+    "car":     "🚗",
+    "minivan": "🚙",
+    "van":     "🚐",
+    "bus":     "🚌",
 }

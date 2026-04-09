@@ -6,21 +6,26 @@ logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
 #  Distance Methods
-#  - "google"    : Google Distance Matrix API (most accurate, costs money)
+#  - "google"    : Google Distance Matrix API (most accurate, paid)
 #  - "osrm"      : OSRM Open-Source Routing (free, road-accurate)
-#  - "haversine" : Straight-line × 1.3 factor (offline fallback)
+#  - "haversine" : Straight-line × road_factor (offline fallback)
 # ─────────────────────────────────────────────
+
+# Sri Lanka has mountainous terrain — straight-line distances are
+# significantly shorter than road distances. A 1.4× multiplier is more
+# realistic than the standard 1.3× used for flat countries.
+SL_ROAD_FACTOR = 1.4
 
 METHOD_LABELS = {
     "google":    "🌐 Google Maps API",
     "osrm":      "🗺️ OSRM (Free Routing)",
-    "haversine": "📐 Haversine (Straight-line)",
+    "haversine": "📐 Haversine (Straight-line est.)",
 }
 
 METHOD_DESCRIPTIONS = {
     "google":    "Road distance via Google Distance Matrix API.\nMost accurate but requires paid API key.",
     "osrm":      "Road distance via OSRM open-source routing.\nFree, accurate road distances — recommended.",
-    "haversine": "Straight-line distance × 1.3 multiplier.\nFast offline fallback, less accurate.",
+    "haversine": f"Straight-line distance × {SL_ROAD_FACTOR} multiplier.\nFast offline fallback, less accurate.",
 }
 
 
@@ -60,86 +65,140 @@ async def google_road_distance(
     params = {
         "origins":      f"{origin_lat},{origin_lon}",
         "destinations": f"{dest_lat},{dest_lon}",
-        "mode": "driving", "units": "metric", "key": api_key,
+        "mode":   "driving",
+        "units":  "metric",
+        "key":    api_key,
+        # Avoid ferries — keeps routes on roads
+        "avoid":  "ferries",
     }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
+                    logger.warning(f"Google Distance Matrix HTTP {resp.status}")
                     return None
                 data = await resp.json(content_type=None)
-        if data.get("status") != "OK":
+
+        api_status = data.get("status", "")
+        if api_status != "OK":
+            logger.warning(f"Google Distance Matrix API status: {api_status}")
             return None
+
         el = data["rows"][0]["elements"][0]
-        if el.get("status") != "OK":
+        el_status = el.get("status", "")
+        if el_status != "OK":
+            logger.warning(f"Google Distance Matrix element status: {el_status}")
             return None
-        return round(el["distance"]["value"] / 1000, 2)
+
+        meters = el["distance"]["value"]
+        km = round(meters / 1000, 2)
+        logger.info(f"Google Distance Matrix: {km} km")
+        return km
+
     except Exception as e:
         logger.warning(f"Google Distance Matrix error: {e}")
         return None
 
 
 # ─────────────────────────────────────────────
-#  Method 2: OSRM (Open Source Routing Machine)
+#  Method 2: OSRM — multiple servers for reliability
 # ─────────────────────────────────────────────
+# We try multiple OSRM servers in order. The public demo server can be
+# unreliable for Sri Lanka. routing.openstreetmap.de often gives better results.
+_OSRM_SERVERS = [
+    "https://router.project-osrm.org",
+    "https://routing.openstreetmap.de/routed-car",
+]
+
 async def osrm_road_distance(
     origin_lat: float, origin_lon: float,
     dest_lat: float,   dest_lon: float,
 ) -> float | None:
     """
-    Get road distance using the public OSRM demo server (free, no API key).
-    Uses router.project-osrm.org — the global public instance.
+    Get road distance using OSRM routing.
+    Tries multiple public servers for better reliability.
     """
-    url = (
-        f"http://router.project-osrm.org/route/v1/driving/"
-        f"{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
-        f"?overview=false&annotations=false"
-    )
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json(content_type=None)
-        if data.get("code") != "Ok":
-            return None
-        routes = data.get("routes")
-        if not routes:
-            return None
-        distance_m = routes[0]["distance"]
-        return round(distance_m / 1000, 2)
-    except Exception as e:
-        logger.warning(f"OSRM routing error: {e}")
-        return None
+    coord_str = f"{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
+
+    for base in _OSRM_SERVERS:
+        url = f"{base}/route/v1/driving/{coord_str}?overview=false&annotations=false"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json(content_type=None)
+
+            if data.get("code") != "Ok":
+                continue
+
+            routes = data.get("routes")
+            if not routes:
+                continue
+
+            km = round(routes[0]["distance"] / 1000, 2)
+            logger.info(f"OSRM ({base}): {km} km")
+            return km
+
+        except Exception as e:
+            logger.warning(f"OSRM server {base} error: {e}")
+            continue
+
+    logger.warning("All OSRM servers failed")
+    return None
 
 
 # ─────────────────────────────────────────────
-#  Unified distance function — reads method from DB setting
+#  Unified distance function
 # ─────────────────────────────────────────────
 async def get_road_distance(
     origin_lat: float, origin_lon: float,
     dest_lat: float,   dest_lon: float,
     api_key: str = "",
-    method: str = "osrm",           # "google" | "osrm" | "haversine"
+    method: str = "osrm",   # "google" | "osrm" | "haversine"
 ) -> tuple[float, str]:
     """
     Returns (distance_km, method_used).
-    Falls back to haversine if chosen method fails.
+
+    Strategy:
+    - If Google API key is set AND method is "google"  → use Google
+    - If method is "osrm"                               → use OSRM
+    - Always fall back to haversine × SL_ROAD_FACTOR if API fails
+
+    Auto-upgrade: If method == "osrm" but Google key is available and OSRM
+    fails, we try Google before final haversine fallback.
     """
     method = (method or "osrm").lower()
 
+    # ── Google ──────────────────────────────────────────────────────────────
     if method == "google":
-        d = await google_road_distance(origin_lat, origin_lon, dest_lat, dest_lon, api_key)
-        if d is not None:
-            return d, "google"
-        logger.warning("Google Maps failed — falling back to haversine")
+        if not api_key:
+            logger.warning("Google method selected but no API key — falling back to OSRM")
+        else:
+            d = await google_road_distance(origin_lat, origin_lon, dest_lat, dest_lon, api_key)
+            if d is not None:
+                return d, "google"
+            logger.warning("Google Distance Matrix failed — trying OSRM")
+            # Try OSRM before haversine
+            d = await osrm_road_distance(origin_lat, origin_lon, dest_lat, dest_lon)
+            if d is not None:
+                return d, "osrm"
 
+    # ── OSRM ────────────────────────────────────────────────────────────────
     elif method == "osrm":
         d = await osrm_road_distance(origin_lat, origin_lon, dest_lat, dest_lon)
         if d is not None:
             return d, "osrm"
-        logger.warning("OSRM failed — falling back to haversine")
+        logger.warning("OSRM failed")
+        # If we have a Google key, try it before haversine
+        if api_key:
+            logger.info("Trying Google as OSRM fallback")
+            d = await google_road_distance(origin_lat, origin_lon, dest_lat, dest_lon, api_key)
+            if d is not None:
+                return d, "google"
 
-    # Fallback: haversine × 1.3
-    approx = round(haversine(origin_lat, origin_lon, dest_lat, dest_lon) * 1.3, 2)
+    # ── Haversine fallback ───────────────────────────────────────────────────
+    straight = haversine(origin_lat, origin_lon, dest_lat, dest_lon)
+    approx   = round(straight * SL_ROAD_FACTOR, 2)
+    logger.info(f"Haversine fallback: {straight:.2f} km straight → {approx} km estimated")
     return approx, "haversine"

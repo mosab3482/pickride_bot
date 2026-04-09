@@ -104,6 +104,7 @@ async def init_db():
                 rider_id    BIGINT,
                 driver_id   BIGINT,
                 stars       INT,
+                comment     TEXT,
                 created_at  TIMESTAMPTZ DEFAULT NOW()
             );
 
@@ -138,6 +139,14 @@ async def init_db():
             await conn.execute("""
                 ALTER TABLE rides ADD COLUMN IF NOT EXISTS waiting_min
                 DOUBLE PRECISION DEFAULT 0;
+            """)
+        except Exception:
+            pass  # Column already exists
+
+        # Add comment column to ratings if missing (for existing databases)
+        try:
+            await conn.execute("""
+                ALTER TABLE ratings ADD COLUMN IF NOT EXISTS comment TEXT;
             """)
         except Exception:
             pass  # Column already exists
@@ -196,6 +205,26 @@ async def get_user(user_id: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await conn.fetchrow("SELECT * FROM users WHERE user_id=$1", user_id)
+
+
+async def get_user_by_username(username: str):
+    """Look up a user by Telegram username (case-insensitive, with or without @)."""
+    pool = await get_pool()
+    uname = username.lstrip("@")
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT * FROM users WHERE LOWER(username)=LOWER($1)", uname
+        )
+
+
+async def get_users_by_name(name: str):
+    """Look up users whose first_name contains the given string (case-insensitive)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT * FROM users WHERE LOWER(first_name) LIKE LOWER($1)",
+            f"%{name}%"
+        )
 
 
 async def set_user_phone(user_id: int, phone: str):
@@ -463,6 +492,29 @@ async def save_rating(ride_id: int, rider_id: int, driver_id: int, stars: int):
         await update_driver_rating(driver_id, stars)
 
 
+async def save_rating_comment(ride_id: int, rider_id: int, comment: str):
+    """Append a text comment to an existing rating."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE ratings SET comment=$3
+            WHERE ride_id=$1 AND rider_id=$2
+        """, ride_id, rider_id, comment)
+
+
+async def get_driver_rating(driver_id: int) -> str:
+    """Return formatted rating string e.g. '4.8⭐' or 'New' if no ratings yet."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT rating_sum, rating_count FROM drivers WHERE user_id=$1", driver_id
+        )
+        if not row or row["rating_count"] == 0:
+            return "New"
+        avg = row["rating_sum"] / row["rating_count"]
+        return f"{avg:.1f}⭐"
+
+
 # ─────────────────────────────────────────────
 #  BLOCKED CATEGORIES
 # ─────────────────────────────────────────────
@@ -550,6 +602,15 @@ async def cleanup_expired_cache():
             "DELETE FROM route_cache WHERE expires_at < $1", now
         )
         logger.info(f"Route cache cleanup: {result}")
+
+
+async def cleanup_all_cache():
+    """Remove ALL route cache entries (used when distance method changes)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM route_cache")
+        logger.info(f"Full route cache cleared: {result}")
+
 
 
 # ─────────────────────────────────────────────
