@@ -107,11 +107,11 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 ),
             )
         ],
+        [InlineKeyboardButton("🚨 I'VE ARRIVED AT PICKUP 🚨", callback_data=f"arrived_{ride_id}")],
     ]
     if rider_wa_btn:
         nav_kb_rows.append(rider_wa_btn)
     nav_kb_rows += [
-        [InlineKeyboardButton("🚨 I'VE ARRIVED AT PICKUP 🚨", callback_data=f"arrived_{ride_id}")],
         [InlineKeyboardButton("⚠️ SET METER TO 0️⃣ — 🟢 START TRIP 🟢", callback_data=f"starttrip_{ride_id}")],
     ]
     nav_kb = InlineKeyboardMarkup(nav_kb_rows)
