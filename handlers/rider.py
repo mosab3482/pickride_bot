@@ -337,7 +337,8 @@ async def _show_fare_estimate(update, context: ContextTypes.DEFAULT_TYPE,
         "✏ Distance: " + str(dist) + " km" + dist_note + "\n"
         "💵 Rate: First " + str(base_km) + " km = LKR " + str(base_fare) +
         ", then LKR " + str(per_km) + "/km\n"
-        "💰 Total Fare: LKR " + str(fare) + "\n\n"
+        "⏱ Waiting Rate: LKR " + str(waiting_rate) + "/min\n"
+        "💰 Est. Fare: LKR " + str(fare) + "\n\n"
         "Confirm your ride to notify nearby drivers."
     )
 

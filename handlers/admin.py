@@ -59,18 +59,24 @@ def pricing_keyboard() -> InlineKeyboardMarkup:
 
 async def vehicle_pricing_keyboard() -> InlineKeyboardMarkup:
     """Show all vehicle types with their current rates."""
-    global_base = float(await db.get_setting("base_fare")   or 100)
-    global_rate = float(await db.get_setting("per_km_rate") or 50)
+    global_base   = float(await db.get_setting("base_fare")    or 100)
+    global_rate   = float(await db.get_setting("per_km_rate")  or 50)
+    global_basekm = float(await db.get_setting("base_km")      or 2)
+    global_wait   = float(await db.get_setting("waiting_rate") or 5)
 
     rows = []
     for vt in VEHICLE_TYPES:
         emoji  = VEHICLE_EMOJIS.get(vt, "🚗")
         b_raw  = await db.get_setting(f"base_fare_{vt}")
         r_raw  = await db.get_setting(f"per_km_rate_{vt}")
+        k_raw  = await db.get_setting(f"base_km_{vt}")
+        w_raw  = await db.get_setting(f"waiting_rate_{vt}")
         b_val  = float(b_raw) if b_raw else global_base
         r_val  = float(r_raw) if r_raw else global_rate
-        custom = "✅" if (b_raw or r_raw) else "🔗"
-        label  = f"{custom} {emoji} {vt.title()} — LKR {b_val} + {r_val}/km"
+        k_val  = float(k_raw) if k_raw else global_basekm
+        w_val  = float(w_raw) if w_raw else global_wait
+        custom = "✅" if (b_raw or r_raw or k_raw or w_raw) else "🔗"
+        label  = f"{custom} {emoji} {vt.title()} — {b_val}+{r_val}/km | {k_val}km | w:{w_val}"
         rows.append([InlineKeyboardButton(label, callback_data=f"adm_veh_{vt}")])
 
     rows.append([InlineKeyboardButton("⬅️ Back", callback_data="adm_back")])
@@ -78,11 +84,13 @@ async def vehicle_pricing_keyboard() -> InlineKeyboardMarkup:
 
 
 def vehicle_edit_keyboard(vt: str) -> InlineKeyboardMarkup:
-    """Edit keyboard for a specific vehicle type."""
+    """Edit keyboard for a specific vehicle type — all 4 pricing fields."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Set Base Fare",    callback_data=f"adm_setvbase_{vt}")],
-        [InlineKeyboardButton("📏 Set Per-KM Rate",  callback_data=f"adm_setvrate_{vt}")],
-        [InlineKeyboardButton("🔄 Reset to Global",   callback_data=f"adm_resetveh_{vt}")],
+        [InlineKeyboardButton("💰 Set Base Fare",      callback_data=f"adm_setvbase_{vt}")],
+        [InlineKeyboardButton("📏 Set Per-KM Rate",    callback_data=f"adm_setvrate_{vt}")],
+        [InlineKeyboardButton("🛣️ Set Base KM",        callback_data=f"adm_setvbasekm_{vt}")],
+        [InlineKeyboardButton("⏱ Set Waiting Rate",   callback_data=f"adm_setvwait_{vt}")],
+        [InlineKeyboardButton("🔄 Reset to Global",    callback_data=f"adm_resetveh_{vt}")],
         [InlineKeyboardButton("⬅️ Back",               callback_data="adm_vehpricing")],
     ])
 
@@ -213,25 +221,34 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data.startswith("adm_veh_") and not data.startswith("adm_setvbase_") \
-            and not data.startswith("adm_setvrate_") and not data.startswith("adm_resetveh_"):
+            and not data.startswith("adm_setvrate_") and not data.startswith("adm_resetveh_") \
+            and not data.startswith("adm_setvbasekm_") and not data.startswith("adm_setvwait_"):
         vt = data.replace("adm_veh_", "").lower()
         if vt not in VEHICLE_TYPES:
             await query.answer("⚠️ Unknown vehicle type.", show_alert=True)
             return
         emoji = VEHICLE_EMOJIS.get(vt, "🚗")
-        global_base = float(await db.get_setting("base_fare")   or 100)
-        global_rate = float(await db.get_setting("per_km_rate") or 50)
-        b_raw = await db.get_setting(f"base_fare_{vt}")
-        r_raw = await db.get_setting(f"per_km_rate_{vt}")
-        b_val = float(b_raw) if b_raw else global_base
-        r_val = float(r_raw) if r_raw else global_rate
-        status = "✅ Custom set" if (b_raw or r_raw) else "🔗 Using global"
+        global_base   = float(await db.get_setting("base_fare")    or 100)
+        global_rate   = float(await db.get_setting("per_km_rate")  or 50)
+        global_basekm = float(await db.get_setting("base_km")      or 2)
+        global_wait   = float(await db.get_setting("waiting_rate") or 5)
+        b_raw  = await db.get_setting(f"base_fare_{vt}")
+        r_raw  = await db.get_setting(f"per_km_rate_{vt}")
+        k_raw  = await db.get_setting(f"base_km_{vt}")
+        w_raw  = await db.get_setting(f"waiting_rate_{vt}")
+        b_val  = float(b_raw) if b_raw else global_base
+        r_val  = float(r_raw) if r_raw else global_rate
+        k_val  = float(k_raw) if k_raw else global_basekm
+        w_val  = float(w_raw) if w_raw else global_wait
+        status = "✅ Custom set" if (b_raw or r_raw or k_raw or w_raw) else "🔗 Using global"
         await query.edit_message_text(
             f"{emoji} *{vt.title()} Pricing*\n\n"
             f"Status: {status}\n\n"
             f"💰 Base Fare:    LKR {b_val}\n"
-            f"📏 Per-KM Rate:  LKR {r_val}/km\n\n"
-            f"*(Global: LKR {global_base} base + LKR {global_rate}/km)*\n\n"
+            f"📏 Per-KM Rate:  LKR {r_val}/km\n"
+            f"🛣️ Base KM:      {k_val} km\n"
+            f"⏱ Waiting Rate: LKR {w_val}/min\n\n"
+            f"*(Global: LKR {global_base} base | LKR {global_rate}/km | {global_basekm} km | LKR {global_wait}/min)*\n\n"
             f"Tap to edit:",
             parse_mode="Markdown",
             reply_markup=vehicle_edit_keyboard(vt),
@@ -259,14 +276,42 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
 
+    elif data.startswith("adm_setvbasekm_"):
+        vt = data.replace("adm_setvbasekm_", "").lower()
+        emoji = VEHICLE_EMOJIS.get(vt, "🚗")
+        context.user_data["adm_awaiting"] = f"vbasekm_{vt}"
+        context.user_data["adm_veh_back"] = vt
+        global_basekm = await db.get_setting("base_km") or "2"
+        await query.edit_message_text(
+            f"{emoji} *{vt.title()} — Base KM*\n\n"
+            f"Global default: {global_basekm} km\n\n"
+            f"Enter new Base KM (free distance before per-km rate kicks in):",
+            parse_mode="Markdown",
+        )
+
+    elif data.startswith("adm_setvwait_"):
+        vt = data.replace("adm_setvwait_", "").lower()
+        emoji = VEHICLE_EMOJIS.get(vt, "🚗")
+        context.user_data["adm_awaiting"] = f"vwait_{vt}"
+        context.user_data["adm_veh_back"] = vt
+        global_wait = await db.get_setting("waiting_rate") or "5"
+        await query.edit_message_text(
+            f"{emoji} *{vt.title()} — Waiting Rate*\n\n"
+            f"Global default: LKR {global_wait}/min\n\n"
+            f"Enter new Waiting Rate (LKR per minute):",
+            parse_mode="Markdown",
+        )
+
     elif data.startswith("adm_resetveh_"):
         vt = data.replace("adm_resetveh_", "").lower()
         emoji = VEHICLE_EMOJIS.get(vt, "🚗")
-        # Delete custom rates → fall back to global
-        await db.set_setting(f"base_fare_{vt}",   "")
-        await db.set_setting(f"per_km_rate_{vt}", "")
+        # Delete all 4 custom rates → fall back to global
+        await db.set_setting(f"base_fare_{vt}",    "")
+        await db.set_setting(f"per_km_rate_{vt}",  "")
+        await db.set_setting(f"base_km_{vt}",      "")
+        await db.set_setting(f"waiting_rate_{vt}", "")
         await query.edit_message_text(
-            f"✅ {emoji} *{vt.title()}* rates reset to global defaults.",
+            f"✅ {emoji} *{vt.title()}* — all 4 rates reset to global defaults.",
             parse_mode="Markdown",
             reply_markup=await vehicle_pricing_keyboard(),
         )
@@ -544,7 +589,8 @@ async def admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         await update.message.reply_text(f"✅ *{labels[awaiting]}* updated to `{text}`.", parse_mode="Markdown")
 
-    elif awaiting.startswith("vbase_") or awaiting.startswith("vrate_"):
+    elif awaiting.startswith("vbase_") or awaiting.startswith("vrate_") \
+            or awaiting.startswith("vbasekm_") or awaiting.startswith("vwait_"):
         try:
             val = float(text)
             if val < 0:
@@ -557,15 +603,25 @@ async def admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             vt  = awaiting.replace("vbase_", "")
             key = f"base_fare_{vt}"
             lbl = "Base Fare"
-        else:
+        elif awaiting.startswith("vrate_"):
             vt  = awaiting.replace("vrate_", "")
             key = f"per_km_rate_{vt}"
             lbl = "Per-KM Rate"
+        elif awaiting.startswith("vbasekm_"):
+            vt  = awaiting.replace("vbasekm_", "")
+            key = f"base_km_{vt}"
+            lbl = "Base KM"
+        else:  # vwait_
+            vt  = awaiting.replace("vwait_", "")
+            key = f"waiting_rate_{vt}"
+            lbl = "Waiting Rate"
 
         emoji = VEHICLE_EMOJIS.get(vt, "🚗")
         await db.set_setting(key, text)
+        suffix = " km" if lbl == "Base KM" else " LKR"
+        unit   = "km" if lbl == "Base KM" else ("LKR/min" if lbl == "Waiting Rate" else "LKR")
         await update.message.reply_text(
-            f"✅ {emoji} *{vt.title()} — {lbl}* set to `LKR {text}`.",
+            f"✅ {emoji} *{vt.title()} — {lbl}* set to `{text} {unit}`.",
             parse_mode="Markdown",
         )
 

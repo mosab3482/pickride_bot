@@ -27,13 +27,17 @@ async def get_vehicle_rates(vehicle_type: str) -> tuple[float, float, float, flo
     vt = vehicle_type.lower() if vehicle_type else "car"
 
     # Per-vehicle overrides (None = not set → use global)
-    base_raw  = await get_setting(f"base_fare_{vt}")
-    rate_raw  = await get_setting(f"per_km_rate_{vt}")
+    base_raw   = await get_setting(f"base_fare_{vt}")
+    rate_raw   = await get_setting(f"per_km_rate_{vt}")
+    basekm_raw = await get_setting(f"base_km_{vt}")
+    wait_raw   = await get_setting(f"waiting_rate_{vt}")
 
-    base_fare   = float(base_raw)  if base_raw  else global_base
-    per_km_rate = float(rate_raw)  if rate_raw  else global_rate
+    base_fare   = float(base_raw)   if base_raw   else global_base
+    per_km_rate = float(rate_raw)   if rate_raw   else global_rate
+    base_km     = float(basekm_raw) if basekm_raw else global_basekm
+    waiting_rate = float(wait_raw)  if wait_raw   else global_wait
 
-    return base_fare, per_km_rate, global_basekm, global_wait
+    return base_fare, per_km_rate, base_km, waiting_rate
 
 
 async def calculate_fare(

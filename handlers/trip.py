@@ -111,25 +111,23 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if rider_wa_btn:
         nav_kb_rows.append(rider_wa_btn)
     nav_kb_rows += [
-        [InlineKeyboardButton("━━━━━━━━━━━━━━━━━━━━━", callback_data="noop")],
-        [InlineKeyboardButton("🚦 SET METER TO 0️⃣ FIRST 🚦", callback_data="noop")],
+        [InlineKeyboardButton("⚠️ Set vehicle meter to 0 before starting", callback_data="noop")],
         [InlineKeyboardButton("🟢🟢  ✅  START TRIP  ✅  🟢🟢", callback_data=f"starttrip_{ride_id}")],
     ]
     nav_kb = InlineKeyboardMarkup(nav_kb_rows)
 
     await query.message.reply_text(
         f"🎉 You've accepted Ride \#{ride_id}!\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🚨 *SET YOUR VEHICLE METER TO 0️⃣*\n"
-        f"*BEFORE PRESSING START TRIP!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👤 Rider: {rider_username}\n"
         f"📞 Contact: {rider_phone}\n"
         f"✏ Distance: {dist_km} km\n"
         f"💰 Fare: LKR {fare}\n\n"
         f"📍 Pickup:   {pickup_name}\n"
         f"🏁 Drop-off: {dropoff_name}\n\n"
-        f"Use the buttons below to navigate. Call rider if needed.\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🚨 *SET YOUR VEHICLE METER TO 0️⃣*\n"
+        f"*BEFORE PRESSING START TRIP\!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👇 *Tap START TRIP when rider is in the vehicle:*",
         parse_mode="Markdown",
         reply_markup=nav_kb,
@@ -147,6 +145,10 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     # Fetch driver rating
     driver_rating = await db.get_driver_rating(driver_id)
 
+    # Fetch waiting rate for this vehicle type (for transparency in rider notification)
+    from utils.fare import get_vehicle_rates as _get_rates
+    _, _, _base_km, _waiting_rate = await _get_rates(ride["vehicle_type"] or "car")
+
     await context.bot.send_message(
         ride["rider_id"],
         f"✅ Ride #{ride_id} accepted!\n\n"
@@ -155,7 +157,8 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         f"📍 Pickup:   {pickup_name}\n"
         f"🏁 Drop-off: {dropoff_name}\n"
         f"✏ Distance: {dist_km} km\n"
-        f"💰 Est. Fare: LKR {fare}\n\n"
+        f"💰 Est. Fare: LKR {fare}\n"
+        f"⏱ Waiting Rate: LKR {_waiting_rate}/min *(system rate)*\n\n"
         f"Driver is on the way. Please wait at the pickup location.",
         reply_markup=InlineKeyboardMarkup(rider_alert_btns) if rider_alert_btns else None,
     )
@@ -403,11 +406,12 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Get driver rating
     driver_rating = await db.get_driver_rating(ride["driver_id"])
 
-    # Build waiting line
-    waiting_line = ""
+    # Build waiting line — always show the configured rate; show charge only if > 0
+    waiting_rate_line = f"⏱ Waiting Rate: LKR {waiting_rate}/min *(system rate)*\n"
+    waiting_charge_line = ""
     if waiting_min > 0:
         waiting_charge = round(waiting_min * waiting_rate, 2)
-        waiting_line = f"⏱ Waiting: {waiting_min} min × LKR {waiting_rate}/min = LKR {waiting_charge}\n"
+        waiting_charge_line = f"⏱ Waiting: {waiting_min} min × LKR {waiting_rate}/min = LKR {waiting_charge}\n"
 
     completion_msg = (
         f"✅ TeleCabs — Trip #{ride_id} Completed!\n\n"
@@ -415,7 +419,8 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🚘 Driver: {driver_tag} {driver_rating}\n"
         f"📏 Distance: {distance} km\n"
         f"💵 Rate: First {base_km} km = LKR {base_fare}, then LKR {per_km}/km\n"
-        f"{waiting_line}"
+        f"{waiting_rate_line}"
+        f"{waiting_charge_line}"
         f"💰 Total Fare: LKR {fare}\n\n"
         f"Thank you for using TeleCabs!"
     )
@@ -430,7 +435,8 @@ async def handle_waiting_time(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"🚘 Driver: {driver_tag} {driver_rating}\n"
         f"📏 Distance: {distance} km\n"
         f"💵 Rate: First {base_km} km = LKR {base_fare}, then LKR {per_km}/km\n"
-        f"{waiting_line}"
+        f"{waiting_rate_line}"
+        f"{waiting_charge_line}"
         f"💰 *Total Fare: LKR {fare}*\n"
         f"📍 Pickup:   {ride['pickup_name'] or 'N/A'}\n"
         f"🏁 Drop-off: {ride['dropoff_name'] or 'N/A'}"
