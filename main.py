@@ -25,6 +25,7 @@ from handlers.driver import (
 from handlers.rider import rider_conv_handler, rider_confirm
 from handlers.trip import (
     accept_ride_callback,
+    arrived_ride_callback,
     start_trip_callback,
     share_location_callback,
     handle_start_trip_location,
@@ -281,7 +282,8 @@ def main():
     )
 
     # ── All other callback queries in Group 1 ────
-    app.add_handler(CallbackQueryHandler(accept_ride_callback,    pattern=r"^accept_\d+$"),  group=1)
+    app.add_handler(CallbackQueryHandler(accept_ride_callback,    pattern=r"^accept_\d+$"),   group=1)
+    app.add_handler(CallbackQueryHandler(arrived_ride_callback,   pattern=r"^arrived_\d+$"),  group=1)
     app.add_handler(CallbackQueryHandler(start_trip_callback,     pattern=r"^starttrip_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(share_location_callback, pattern=r"^shareloc_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(rating_callback,         pattern=r"^rate_\d+_\d+$"), group=1)

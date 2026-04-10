@@ -111,6 +111,7 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if rider_wa_btn:
         nav_kb_rows.append(rider_wa_btn)
     nav_kb_rows += [
+        [InlineKeyboardButton("🚨 I'VE ARRIVED AT PICKUP 🚨", callback_data=f"arrived_{ride_id}")],
         [InlineKeyboardButton("⚠️ SET METER TO 0️⃣ — 🟢 START TRIP 🟢", callback_data=f"starttrip_{ride_id}")],
     ]
     nav_kb = InlineKeyboardMarkup(nav_kb_rows)
@@ -160,6 +161,56 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         f"⏱ Waiting Rate: LKR {_waiting_rate}/min *(system rate)*\n\n"
         f"Driver is on the way. Please wait at the pickup location.",
         reply_markup=InlineKeyboardMarkup(rider_alert_btns) if rider_alert_btns else None,
+    )
+
+
+# ────────────────
+# ─────────────────────────────
+#  Arrived at Pickup — notify rider
+# ─────────────────────────────
+async def arrived_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Rider notified! ✅", show_alert=False)
+
+    driver_id = update.effective_user.id
+    ride_id   = int(query.data.split("_")[1])
+    ride      = await db.get_ride(ride_id)
+
+    if not ride or ride["status"] not in ("pending", "accepted"):
+        await query.answer("⚠️ Cannot send arrived — ride not active.", show_alert=True)
+        return
+
+    driver      = await db.get_driver(driver_id)
+    driver_user = await db.get_user(driver_id)
+    driver_name = driver["full_name"] if driver else "Your driver"
+    driver_phone = driver_user["phone"] if driver_user and driver_user["phone"] else "N/A"
+
+    # Notify rider
+    rider_alert_btns = []
+    if driver_phone and driver_phone != "N/A":
+        clean = driver_phone.replace("+", "").replace(" ", "")
+        rider_alert_btns.append(
+            [InlineKeyboardButton("📞 Call/WhatsApp Driver", url=f"https://wa.me/{clean}")]
+        )
+    try:
+        await context.bot.send_message(
+            ride["rider_id"],
+            f"🚨 *Your driver has arrived\!*\n\n"
+            f"🚗 Driver: {driver_name}\n"
+            f"📞 Contact: {driver_phone}\n\n"
+            f"Please head to the pickup location now.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rider_alert_btns) if rider_alert_btns else None,
+        )
+    except Exception:
+        pass
+
+    # Confirm to driver
+    await query.edit_message_reply_markup(
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Rider Notified — Arrived!", callback_data="noop")],
+            [InlineKeyboardButton("⚠️ SET METER TO 0️⃣ — 🟢 START TRIP 🟢", callback_data=f"starttrip_{ride_id}")],
+        ])
     )
 
 
