@@ -111,20 +111,27 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if rider_wa_btn:
         nav_kb_rows.append(rider_wa_btn)
     nav_kb_rows += [
-        [InlineKeyboardButton("🟢 Start Trip", callback_data=f"starttrip_{ride_id}")],
+        [InlineKeyboardButton("━━━━━━━━━━━━━━━━━━━━━", callback_data="noop")],
+        [InlineKeyboardButton("🚦 SET METER TO 0️⃣ FIRST 🚦", callback_data="noop")],
+        [InlineKeyboardButton("🟢🟢  ✅  START TRIP  ✅  🟢🟢", callback_data=f"starttrip_{ride_id}")],
     ]
     nav_kb = InlineKeyboardMarkup(nav_kb_rows)
 
     await query.message.reply_text(
-        f"🎉 You've accepted Ride #{ride_id}!\n\n"
+        f"🎉 You've accepted Ride \#{ride_id}!\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🚨 *SET YOUR VEHICLE METER TO 0️⃣*\n"
+        f"*BEFORE PRESSING START TRIP!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👤 Rider: {rider_username}\n"
         f"📞 Contact: {rider_phone}\n"
         f"✏ Distance: {dist_km} km\n"
         f"💰 Fare: LKR {fare}\n\n"
         f"📍 Pickup:   {pickup_name}\n"
         f"🏁 Drop-off: {dropoff_name}\n\n"
-        f"Use the buttons below to navigate. Call rider if needed. "
-        f"Tap Start Trip when ready:",
+        f"Use the buttons below to navigate. Call rider if needed.\n"
+        f"👇 *Tap START TRIP when rider is in the vehicle:*",
+        parse_mode="Markdown",
         reply_markup=nav_kb,
     )
 

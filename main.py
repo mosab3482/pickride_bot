@@ -287,6 +287,9 @@ def main():
     app.add_handler(CallbackQueryHandler(rating_callback,         pattern=r"^rate_\d+_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(rating_comment_skip_callback, pattern=r"^ratecomment_\d+_skip$"), group=1)
     app.add_handler(CallbackQueryHandler(admin_callback,          pattern=r"^adm_"),          group=1)
+    # Silently answer decorative/divider buttons
+    async def _noop_cb(u, c): await u.callback_query.answer()
+    app.add_handler(CallbackQueryHandler(_noop_cb, pattern=r"^noop$"), group=1)
 
     # ── Main menu text buttons ───────────────────
     app.add_handler(MessageHandler(filters.Regex("^ℹ️ Help$"),                handle_help))
