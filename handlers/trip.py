@@ -111,8 +111,7 @@ async def accept_ride_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if rider_wa_btn:
         nav_kb_rows.append(rider_wa_btn)
     nav_kb_rows += [
-        [InlineKeyboardButton("⚠️ Set vehicle meter to 0 before starting", callback_data="noop")],
-        [InlineKeyboardButton("🟢🟢  ✅  START TRIP  ✅  🟢🟢", callback_data=f"starttrip_{ride_id}")],
+        [InlineKeyboardButton("⚠️ SET METER TO 0️⃣ — 🟢 START TRIP 🟢", callback_data=f"starttrip_{ride_id}")],
     ]
     nav_kb = InlineKeyboardMarkup(nav_kb_rows)
 
