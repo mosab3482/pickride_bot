@@ -64,3 +64,25 @@ async def calculate_fare(
         fare += waiting_min * waiting_rate
 
     return round(fare, 2), base_fare, per_km_rate, base_km, waiting_rate
+
+
+async def calculate_fare_for_driver(
+    distance_km: float,
+    vehicle_type: str = "car",
+    driver_rate_per_km: float | None = None,
+) -> tuple:
+    """
+    Like calculate_fare() but uses the driver's personal rate_per_km when set.
+    Returns (fare, base_fare, per_km_rate, base_km, waiting_rate)
+    """
+    base_fare, system_per_km, base_km, waiting_rate = await get_vehicle_rates(vehicle_type)
+
+    # Driver-specific rate overrides the system per-km rate
+    per_km_rate = driver_rate_per_km if driver_rate_per_km is not None else system_per_km
+
+    if distance_km <= base_km:
+        fare = base_fare
+    else:
+        fare = base_fare + (distance_km - base_km) * per_km_rate
+
+    return round(fare, 2), base_fare, per_km_rate, base_km, waiting_rate

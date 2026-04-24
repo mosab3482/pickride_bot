@@ -47,6 +47,7 @@ async def init_db():
                 phone       TEXT,
                 role        TEXT DEFAULT 'rider',
                 is_blocked  BOOLEAN DEFAULT FALSE,
+                language    TEXT DEFAULT 'en',
                 created_at  TIMESTAMPTZ DEFAULT NOW()
             );
 
@@ -151,6 +152,23 @@ async def init_db():
         except Exception:
             pass  # Column already exists
 
+        # Add per-driver rate column (NULL = use system rate)
+        try:
+            await conn.execute("""
+                ALTER TABLE drivers ADD COLUMN IF NOT EXISTS rate_per_km
+                DOUBLE PRECISION NULL;
+            """)
+        except Exception:
+            pass
+
+        # Add ride_candidates column for storing driver list per ride
+        try:
+            await conn.execute("""
+                ALTER TABLE rides ADD COLUMN IF NOT EXISTS ride_candidates TEXT NULL;
+            """)
+        except Exception:
+            pass
+
         # Insert default settings if not present
         defaults = {
             "base_fare":        str(DEFAULT_BASE_FARE),
@@ -194,11 +212,23 @@ async def set_setting(key: str, value: str):
 async def upsert_user(user_id: int, username: str, first_name: str):
     pool = await get_pool()
     async with pool.acquire() as conn:
+        # Migrate: add language column if it doesn't exist yet
+        await conn.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en'"
+        )
         await conn.execute("""
             INSERT INTO users (user_id, username, first_name)
             VALUES ($1, $2, $3)
             ON CONFLICT (user_id) DO UPDATE SET username=$2, first_name=$3
         """, user_id, username, first_name)
+
+
+async def set_user_language(user_id: int, lang: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET language=$2 WHERE user_id=$1", user_id, lang
+        )
 
 
 async def get_user(user_id: int):
@@ -325,6 +355,7 @@ async def get_nearby_drivers(lat: float, lon: float, radius_km: float, vehicle_t
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT d.user_id, d.current_lat, d.current_lon, d.full_name,
+                   d.plate_number, d.vehicle_type, d.rate_per_km,
                    u.username, u.phone
             FROM drivers d JOIN users u ON d.user_id=u.user_id
             WHERE d.vehicle_type=$1
@@ -342,6 +373,81 @@ async def get_nearby_drivers(lat: float, lon: float, radius_km: float, vehicle_t
             if dist <= radius_km:
                 nearby.append(dict(row) | {"dist_km": dist})
         return nearby
+
+
+async def get_drivers_for_ride(
+    lat: float, lon: float, radius_km: float, vehicle_type: str
+) -> list:
+    """
+    Return available drivers sorted by distance, with plate and rate info.
+    Used for the rider's driver-selection list.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT d.user_id, d.current_lat, d.current_lon, d.full_name,
+                   d.plate_number, d.vehicle_type, d.rate_per_km,
+                   d.rating_sum, d.rating_count,
+                   u.username, u.phone
+            FROM drivers d JOIN users u ON d.user_id=u.user_id
+            WHERE d.vehicle_type=$1
+              AND d.is_online=TRUE
+              AND d.is_muted=FALSE
+              AND d.current_lat IS NOT NULL
+              AND d.current_lon IS NOT NULL
+              AND u.is_blocked=FALSE
+        """, vehicle_type)
+
+    from utils.distance import haversine
+    result = []
+    for row in rows:
+        dist = haversine(lat, lon, row["current_lat"], row["current_lon"])
+        if dist <= radius_km:
+            result.append(dict(row) | {"dist_km": round(dist, 2)})
+    # Sort closest first
+    result.sort(key=lambda r: r["dist_km"])
+    return result
+
+
+async def save_driver_candidates(ride_id: int, candidates_json: str):
+    """Store the serialised driver-candidate list on the ride row."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE rides SET ride_candidates=$2 WHERE ride_id=$1
+        """, ride_id, candidates_json)
+
+
+async def get_driver_candidates(ride_id: int) -> str | None:
+    """Retrieve the stored candidate JSON string for a ride."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT ride_candidates FROM rides WHERE ride_id=$1", ride_id
+        )
+        return row["ride_candidates"] if row else None
+
+
+async def assign_driver_to_ride(ride_id: int, driver_id: int):
+    """
+    Assign a driver to a pending ride (rider chose them from the list).
+    Sets status back to 'pending' so the driver's Accept button works.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE rides SET driver_id=$2, status='pending'
+            WHERE ride_id=$1
+        """, ride_id, driver_id)
+
+
+async def set_driver_rate(user_id: int, rate_per_km: float | None):
+    """Set or clear a driver's personal per-km rate."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE drivers SET rate_per_km=$2 WHERE user_id=$1
+        """, user_id, rate_per_km)
 
 
 async def update_driver_rating(driver_id: int, stars: int):

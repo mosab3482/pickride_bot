@@ -16,13 +16,15 @@ from config import BOT_TOKEN
 # ── Handlers ──────────────────────────────────────────────────────────────────
 from handlers.start import (
     cmd_start, handle_help, cmd_cancel, cmd_cancel_ride,
+    handle_set_language, handle_language_button, cmd_regis,
     main_keyboard,
 )
 from handlers.driver import (
     driver_conv_handler,
     drv_checkin, drv_mute, drv_unmute, drv_settings, drv_update_location,
+    drv_rate_menu, drv_handle_rate_change,
 )
-from handlers.rider import rider_conv_handler, rider_confirm
+from handlers.rider import rider_conv_handler, rider_confirm, rider_select_driver
 from handlers.trip import (
     accept_ride_callback,
     arrived_ride_callback,
@@ -179,6 +181,12 @@ async def post_shutdown(app: Application):
 #  Trip end text router
 # ─────────────────────────────────────────────
 async def _trip_end_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Driver rate change takes priority (clears its own flag)
+    if context.user_data.get("awaiting_rate_change"):
+        handled = await drv_handle_rate_change(update, context)
+        if handled:
+            return
+
     if context.user_data.get("ending_ride"):
         handled = await handle_meter_distance(update, context)
         if handled:
@@ -286,23 +294,29 @@ def main():
     app.add_handler(CallbackQueryHandler(arrived_ride_callback,   pattern=r"^arrived_\d+$"),  group=1)
     app.add_handler(CallbackQueryHandler(start_trip_callback,     pattern=r"^starttrip_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(share_location_callback, pattern=r"^shareloc_\d+$"), group=1)
+    app.add_handler(CallbackQueryHandler(rider_select_driver,     pattern=r"^seldrv_\d+_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(rating_callback,         pattern=r"^rate_\d+_\d+$"), group=1)
     app.add_handler(CallbackQueryHandler(rating_comment_skip_callback, pattern=r"^ratecomment_\d+_skip$"), group=1)
     app.add_handler(CallbackQueryHandler(admin_callback,          pattern=r"^adm_"),          group=1)
+    # ── Language selection ────────────────────────
+    app.add_handler(CallbackQueryHandler(handle_set_language, pattern=r"^setlang_(en|si)$"), group=1)
+
     # Silently answer decorative/divider buttons
     async def _noop_cb(u, c): await u.callback_query.answer()
     app.add_handler(CallbackQueryHandler(_noop_cb, pattern=r"^noop$"), group=1)
 
-    # ── Main menu text buttons ───────────────────
-    app.add_handler(MessageHandler(filters.Regex("^ℹ️ Help$"),                handle_help))
-    app.add_handler(MessageHandler(filters.Regex("^👑 Admin Control ⚙️$"),    admin_entry))
-    app.add_handler(MessageHandler(filters.Regex("^🟥 Cancel Current Ride$"), cmd_cancel_ride))
-    app.add_handler(MessageHandler(filters.Regex("^📍 Update My Location$"),  drv_update_location))
+    # ── Main menu text buttons (EN + SI) ─────────
+    app.add_handler(MessageHandler(filters.Regex("ℹ️"),                       handle_help))
+    app.add_handler(MessageHandler(filters.Regex("👑 Admin Control"),          admin_entry))
+    app.add_handler(MessageHandler(filters.Regex("🟥"),                        cmd_cancel_ride))
+    app.add_handler(MessageHandler(filters.Regex("📍 Update|📍 ස්ථාන"),        drv_update_location))
+    app.add_handler(MessageHandler(filters.Regex("🌐"),                        handle_language_button))
 
     # ── Driver dashboard buttons ─────────────────
     app.add_handler(MessageHandler(filters.Regex("^🔕 Mute$"),   drv_mute))
     app.add_handler(MessageHandler(filters.Regex("^🔔 Unmute"),  drv_unmute))
     app.add_handler(MessageHandler(filters.Regex("^🔧 Settings$"), drv_settings))
+    app.add_handler(MessageHandler(filters.Regex("^💰 My Rate$"),  drv_rate_menu))
     app.add_handler(MessageHandler(filters.Regex("^🔴 End Trip$"), handle_end_trip))
 
     # ── Location messages ────────────────────────
